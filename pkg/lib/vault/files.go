@@ -545,7 +545,7 @@ func RemoveFromVault(vaultPath, password, targetPath string) error {
 
 	for _, entry := range vaultData.Entries {
 		// Remove element or its child elements
-		if entry.Path != targetPath && !filepath.HasPrefix(entry.Path, targetPath+"/") {
+		if entry.Path != targetPath && !strings.HasPrefix(entry.Path, targetPath+"/") {
 			newEntries = append(newEntries, entry)
 		} else {
 			found = true

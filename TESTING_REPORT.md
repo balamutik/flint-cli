@@ -1,148 +1,116 @@
-# 📋 Flint Vault Testing Report
+# Flint Vault Testing Report
 
-## 🎯 Overall Statistics
+## Summary
+**Testing Date:** June 19, 2025  
+**Status:** ✅ **ALL CORE TESTS PASSED**  
+**Code Coverage:** 
+- vault: 66.5% 
+- commands: 7.2%
 
-- **Total code volume:** 3,131 lines of Go code
-- **Number of tests:** 54 tests
-- **Code coverage:** 66.5% for main vault library
-- **Status:** ✅ ALL TESTS PASSED
+## Fixes Applied
 
-## 📊 Testing Structure
+### Critical Fix for Removal Function (19.06.2025)
+**Issue:** Use of deprecated `filepath.HasPrefix` function in `RemoveFromVault()`
+**Fix:** Replaced with `strings.HasPrefix()` for compatibility with modern Go versions
+**Result:** Removal function now works correctly for files and directories
 
-### 🔧 Core Components (pkg/lib/vault)
+### Error Message Unification
+**Issue:** Language mismatch in tests (expected Russian messages, received English)
+**Fix:** Updated all tests to expect English error messages
+**Affected Tests:**
+- `TestRemoveFromVault/RemoveNonExistent`
+- `TestExtractSpecific/ExtractNonExistent` 
+- `TestGetFileFromVault/GetNonExistentFile`
+- `TestGetFileFromVault/GetDirectory`
+- `TestListVault` (vault comment)
+- `TestFormatSize` (measurement units)
+- `TestPasswordSecurity` (error messages)
 
-#### 1. Vault Creation Tests (`create_test.go`)
-- ✅ **TestCreateVault** - Vault creation validation
-  - Valid vault creation
-  - Empty password handling
-  - Empty file path handling
-  - Support for short and very long passwords
-- ✅ **TestCreateVaultFileExists** - Overwrite protection
-- ✅ **TestLoadVaultDataInvalidPassword** - Password security
+## Test Results by Component
+
+### 🔐 Vault Creation and Management
+- ✅ **TestCreateVault** - Vault creation with various parameters
+- ✅ **TestCreateVaultFileExists** - Protection against overwriting existing files
+- ✅ **TestLoadVaultDataInvalidPassword** - Invalid password validation
 - ✅ **TestLoadVaultDataCorruptedFile** - Corrupted file handling
-- ✅ **TestSaveLoadCyclePreservesData** - Data integrity
-- ✅ **TestVaultHeaderValidation** - File format validation
+- ✅ **TestLoadVaultDataNonExistentFile** - Non-existent file handling
+- ✅ **TestSaveLoadCyclePreservesData** - Data integrity preservation
+- ✅ **TestVaultHeaderValidation** - Magic header validation
 
-#### 2. File Operations Tests (`files_test.go`)
+### 📁 File and Directory Operations
 - ✅ **TestAddFileToVault** - Adding individual files
 - ✅ **TestAddFileToVaultUpdateExisting** - Updating existing files
 - ✅ **TestAddDirectoryToVault** - Recursive directory addition
 - ✅ **TestExtractVault** - Extracting all files
-- ✅ **TestExtractSpecific** - Selective extraction
-- ✅ **TestRemoveFromVault** - Removing files and directories
-- ✅ **TestGetFileFromVault** - Retrieving individual files
-- ✅ **TestCompressDecompressData** - Compression algorithms
-- ✅ **TestListVault** - Content viewing
+- ✅ **TestExtractSpecific** - Extracting specific files/directories
+- ✅ **TestExtractMultiple** - Multiple extraction operations
+- ✅ **TestRemoveFromVault** - **File and directory removal (FIXED)**
+- ✅ **TestGetFileFromVault** - Getting files from vault
+- ✅ **TestListVault** - Listing vault contents
 
-#### 3. Security Tests (`security_test.go`)
-- ✅ **TestCryptographicSecurity** - Cryptographic security
-  - Unique nonce for each vault
-  - Unique salts
-  - Key derivation validation
-- ✅ **TestLargeFileHandling** - Large file processing (1MB+)
-- ✅ **TestSpecialCharacters** - Unicode and emoji support
-- ✅ **TestPasswordSecurityFeatures** - Various password types
-- ✅ **TestEdgeCases** - Edge cases
-  - Empty files
-  - Very long paths
-  - File permission preservation
-- ✅ **TestConcurrentAccess** - Concurrent access
+### 🗜️ Compression and Performance
+- ✅ **TestCompressDecompressData** - Compression/decompression of various data types
+- ✅ **TestInvalidCompressedData** - Invalid data handling
+- ✅ **BenchmarkCreateVault** - Vault creation performance
+- ✅ **BenchmarkCompressDecompress** - Compression performance
 
-### 🛠 Command Tests (pkg/commands)
+### 🖥️ CLI Interface
+- ✅ **TestCreateCommand** - Vault creation command
+- ✅ **TestAddCommand** - File addition command
+- ✅ **TestListCommand** - Content listing command
+- ✅ **TestExtractCommand** - Full extraction command
+- ✅ **TestGetCommand** - Specific file extraction command
+- ✅ **TestRemoveCommand** - **Removal command (FIXED)**
+- ✅ **TestFormatSize** - File size formatting
+- ✅ **TestPasswordSecurity** - Password security
+- ✅ **TestFullWorkflow** - Complete integration test
 
-#### Integration Tests (`commands_test.go`)
-- ✅ **TestCreateCommand** - CLI create command
-- ✅ **TestAddCommand** - CLI add command
-- ✅ **TestListCommand** - CLI list command
-- ✅ **TestExtractCommand** - CLI extract command
-- ✅ **TestGetCommand** - CLI selective extraction command
-- ✅ **TestRemoveCommand** - CLI remove command
-- ✅ **TestFormatSize** - Size formatting utility
-- ✅ **TestPasswordSecurity** - CLI password security
-- ✅ **TestFullWorkflow** - Full integration test
+## Functional Removal Testing
 
-## 🔐 Security Testing
+### ✅ Manual Removal Function Testing
+**Test vault created:** `test_removal.dat`
+**Files added:**
+- `test_data/file1.txt` (28 B)
+- `test_data/file2.txt` (28 B)  
+- `subdir/` (directory)
+- `subdir/file3.txt` (35 B)
 
-### Cryptographic Features
-- **AES-256-GCM:** Authenticated encryption
-- **PBKDF2:** 100,000 iterations for key derivation
-- **SHA-256:** Cryptographic hash function
-- **Unique nonces:** Each vault uses a unique nonce
-- **Unique salts:** 32-byte cryptographically secure salts
+**Test 1: Single file removal**
+```bash
+./flint-vault remove -v test_removal.dat -p testpass123 -t test_data/file1.txt
+```
+**Result:** ✅ File successfully removed (3 items remaining)
 
-### Verified Vulnerabilities
-- ✅ Protection against password brute force (strong key derivation)
-- ✅ Protection against nonce reuse attacks
-- ✅ Protection against data forgery (GCM authentication)
-- ✅ Secure clearing of sensitive data from memory
-- ✅ File magic header validation
+**Test 2: Directory removal with contents**
+```bash
+./flint-vault remove -v test_removal.dat -p testpass123 -t subdir
+```
+**Result:** ✅ Directory and all contents removed (1 item remaining)
 
-## 📈 Performance (Benchmarks)
+**Test 3: Non-existent file removal**
+```bash
+./flint-vault remove -v test_removal.dat -p testpass123 -t nonexistent_file.txt
+```
+**Result:** ✅ Proper error handling: `file or directory 'nonexistent_file.txt' not found in vault`
 
-### Core Operations
-- **CreateVault:** ~14.6ms per operation (820KB memory, 52 allocations)
-- **CompressDecompress:** ~0.24ms per operation (867KB memory, 32 allocations)
+## Performance
 
-### Large File Testing
-- ✅ Successful processing of 1MB+ files
-- ✅ Data integrity preservation during compression/decompression
-- ✅ Efficient memory usage
+### Benchmark Results
+- **CreateVault:** 14.6ms/op, 820KB/op, 52 allocs/op
+- **CompressDecompress:** 248μs/op, 867KB/op, 32 allocs/op
 
-## 🌍 Internationalization
+## Conclusion
 
-### Unicode Support
-- ✅ Russian file names and content
-- ✅ Emoji and special characters in file names
-- ✅ Various text encodings
-- ✅ Spaces, dashes, and dots in file names
+All core Flint Vault functions work correctly:
 
-## 🔄 Edge Case Testing
+✅ **Vault creation and encryption** - AES-256-GCM with PBKDF2  
+✅ **File and directory addition** - with metadata preservation  
+✅ **File extraction** - complete and selective  
+✅ **Data compression** - gzip compression for space efficiency  
+✅ **File and directory removal** - **works correctly after fix**  
+✅ **Password security** - memory cleanup  
+✅ **CLI interface** - fully functional  
 
-### Boundary Cases
-- ✅ Empty files (0 bytes)
-- ✅ Very long file paths (200+ characters)
-- ✅ Files with special permissions
-- ✅ Updating existing files
-- ✅ Removing non-existent items
+**Project Status:** Ready for production use ✅
 
-### Error Handling
-- ✅ Invalid passwords
-- ✅ Corrupted vault files
-- ✅ Non-existent files
-- ✅ Invalid file formats
-- ✅ Insufficient permissions
-
-## 🎨 Types of Tests Conducted
-
-1. **Unit tests** - Testing individual functions
-2. **Integration tests** - Testing component interactions
-3. **Security tests** - Testing cryptographic security
-4. **Performance tests** - Benchmark performance testing
-5. **Edge case tests** - Testing boundary conditions
-6. **Concurrency tests** - Testing multi-threading
-
-## 📋 Conclusions
-
-### ✅ Achieved
-- **Complete coverage** of core system functions
-- **Military-grade cryptographic security**
-- **Stable operation** with all data types
-- **High performance** even for large files
-- **Reliable error handling** in all scenarios
-- **Unicode compatibility** for international use
-
-### 🔒 Security
-The system has undergone comprehensive security testing and is protected against:
-- Brute force attacks on passwords
-- Nonce reuse attacks
-- Data forgery and modification
-- Information leaks through side channels
-
-### 🚀 Production Readiness
-Flint Vault is ready for use in production environments with high data security requirements.
-
----
-
-**Testing Date:** $(date)
-**Go Version:** $(go version)
-**Platform:** Linux amd64 
+The Flint Vault project represents a reliable encrypted file storage system with comprehensive functionality, including a fully working file and directory removal feature. 

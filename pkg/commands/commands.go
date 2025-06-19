@@ -8,6 +8,7 @@
 //   - extract: Extract all files from vault
 //   - get: Extract specific files or directories
 //   - remove: Remove files or directories from vault
+//   - info: Show vault file information without password
 //
 // All commands support secure password input and provide comprehensive error handling.
 package commands
@@ -357,6 +358,53 @@ func Run() {
 					return nil
 				},
 			},
+			{
+				Name:  "info",
+				Usage: "Show vault file information without requiring password",
+				Flags: []cli.Flag{
+					&cli.StringFlag{
+						Name:     "file",
+						Aliases:  []string{"f"},
+						Usage:    "Path to file to check",
+						Required: true,
+					},
+				},
+				Action: func(ctx context.Context, cmd *cli.Command) error {
+					filePath := cmd.String("file")
+
+					fmt.Printf("🔍 Analyzing file: %s\n\n", filePath)
+
+					// Get basic vault information
+					info, err := vault.GetVaultInfo(filePath)
+					if err != nil {
+						return fmt.Errorf("file analysis error: %w", err)
+					}
+
+					// Display file information
+					fmt.Printf("📁 File Path: %s\n", info.FilePath)
+					fmt.Printf("📏 File Size: %s\n", formatSize(info.FileSize))
+
+					if info.IsFlintVault {
+						fmt.Printf("✅ File Type: Flint Vault encrypted storage\n")
+						fmt.Printf("🔢 Format Version: %d\n", info.Version)
+						fmt.Printf("🔐 PBKDF2 Iterations: %s\n", formatNumber(int64(info.Iterations)))
+
+						// Perform additional validation
+						if err := vault.ValidateVaultFile(filePath); err != nil {
+							fmt.Printf("⚠️  Validation: Failed - %v\n", err)
+						} else {
+							fmt.Printf("✅ Validation: Passed\n")
+						}
+
+						fmt.Printf("\n💡 This file can be opened with 'flint-vault list' command\n")
+					} else {
+						fmt.Printf("❌ File Type: Not a Flint Vault file\n")
+						fmt.Printf("\n💡 This file cannot be opened by Flint Vault\n")
+					}
+
+					return nil
+				},
+			},
 		},
 	}
 
@@ -377,4 +425,22 @@ func formatSize(size int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %cB", float64(size)/float64(div), "KMGTPE"[exp])
+}
+
+// formatNumber formats large numbers with thousand separators
+func formatNumber(num int64) string {
+	str := fmt.Sprintf("%d", num)
+	if len(str) <= 3 {
+		return str
+	}
+
+	// Add commas every 3 digits from right to left
+	var result []rune
+	for i, digit := range str {
+		if i > 0 && (len(str)-i)%3 == 0 {
+			result = append(result, ',')
+		}
+		result = append(result, digit)
+	}
+	return string(result)
 }

@@ -409,7 +409,7 @@ func TestExtractSpecific(t *testing.T) {
 			t.Errorf("Ожидалась ошибка при извлечении несуществующего файла")
 		}
 
-		expectedError := "файл или каталог 'nonexistent_file.txt' не найден в хранилище"
+		expectedError := "file or directory 'nonexistent_file.txt' not found in vault"
 		if err.Error() != expectedError {
 			t.Errorf("Ожидалась ошибка '%s', получили '%s'", expectedError, err.Error())
 		}
@@ -529,7 +529,7 @@ func TestRemoveFromVault(t *testing.T) {
 			t.Errorf("Ожидалась ошибка при удалении несуществующего файла")
 		}
 
-		expectedError := "файл или каталог 'nonexistent_file.txt' не найден в хранилище"
+		expectedError := "file or directory 'nonexistent_file.txt' not found in vault"
 		if err.Error() != expectedError {
 			t.Errorf("Ожидалась ошибка '%s', получили '%s'", expectedError, err.Error())
 		}
@@ -596,7 +596,7 @@ func TestGetFileFromVault(t *testing.T) {
 			t.Errorf("Ожидалась ошибка при попытке получить несуществующий файл")
 		}
 
-		expectedError := "файл 'nonexistent.txt' не найден в хранилище"
+		expectedError := "file 'nonexistent.txt' not found in vault"
 		if err.Error() != expectedError {
 			t.Errorf("Ожидалась ошибка '%s', получили '%s'", expectedError, err.Error())
 		}
@@ -608,7 +608,7 @@ func TestGetFileFromVault(t *testing.T) {
 			t.Errorf("Ожидалась ошибка при попытке получить каталог как файл")
 		}
 
-		expectedError := "файл 'test_dir' не найден в хранилище"
+		expectedError := "file 'test_dir' not found in vault"
 		if err.Error() != expectedError {
 			t.Errorf("Ожидалась ошибка '%s', получили '%s'", expectedError, err.Error())
 		}
@@ -707,7 +707,7 @@ func TestListVault(t *testing.T) {
 		t.Errorf("Пустое хранилище должно содержать 0 записей, получили %d", len(data.Entries))
 	}
 
-	if data.Comment != "Зашифрованное хранилище Flint Vault" {
+	if data.Comment != "Encrypted Flint Vault Storage" {
 		t.Errorf("Неверный комментарий: %s", data.Comment)
 	}
 }

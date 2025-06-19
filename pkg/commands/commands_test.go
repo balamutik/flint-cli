@@ -595,13 +595,13 @@ func TestFormatSize(t *testing.T) {
 		size     int64
 		expected string
 	}{
-		{0, "0 Б"},
-		{512, "512 Б"},
-		{1024, "1.0 KБ"},
-		{1536, "1.5 KБ"},
-		{1048576, "1.0 MБ"},
-		{1073741824, "1.0 GБ"},
-		{1099511627776, "1.0 TБ"},
+		{0, "0 B"},
+		{512, "512 B"},
+		{1024, "1.0 KB"},
+		{1536, "1.5 KB"},
+		{1048576, "1.0 MB"},
+		{1073741824, "1.0 GB"},
+		{1099511627776, "1.0 TB"},
 	}
 
 	for _, tc := range testCases {
@@ -632,7 +632,7 @@ func TestPasswordSecurity(t *testing.T) {
 	}
 
 	// Проверяем, что ошибка содержит правильное сообщение
-	if !strings.Contains(err.Error(), "неверный пароль") {
+	if !strings.Contains(err.Error(), "invalid password") {
 		t.Errorf("Ошибка должна содержать информацию о неверном пароле: %v", err)
 	}
 }
@@ -709,4 +709,68 @@ func TestFullWorkflow(t *testing.T) {
 	}
 
 	t.Logf("✅ Полный рабочий процесс выполнен успешно!")
+}
+
+func TestInfoCommand(t *testing.T) {
+	helper := NewTestHelper(t)
+	defer helper.Cleanup()
+
+	// Test with valid vault file
+	t.Run("ValidVaultFile", func(t *testing.T) {
+		// Create vault
+		err := vault.CreateVault(helper.vaultPath, helper.password)
+		if err != nil {
+			t.Fatalf("Failed to create vault: %v", err)
+		}
+
+		// Test info command
+		info, err := vault.GetVaultInfo(helper.vaultPath)
+		if err != nil {
+			t.Fatalf("Failed to get vault info: %v", err)
+		}
+
+		if !info.IsFlintVault {
+			t.Errorf("Vault not identified as Flint Vault")
+		}
+
+		if info.Version != vault.CurrentVaultVersion {
+			t.Errorf("Version mismatch: expected %d, got %d", vault.CurrentVaultVersion, info.Version)
+		}
+
+		if info.Iterations != vault.PBKDF2Iters {
+			t.Errorf("Iterations mismatch: expected %d, got %d", vault.PBKDF2Iters, info.Iterations)
+		}
+
+		if info.FileSize <= 0 {
+			t.Errorf("Invalid file size: %d", info.FileSize)
+		}
+	})
+
+	// Test with non-vault file
+	t.Run("NonVaultFile", func(t *testing.T) {
+		nonVaultFile := filepath.Join(helper.tmpDir, "not_vault.txt")
+		err := os.WriteFile(nonVaultFile, []byte("This is not a vault"), 0644)
+		if err != nil {
+			t.Fatalf("Failed to create non-vault file: %v", err)
+		}
+
+		info, err := vault.GetVaultInfo(nonVaultFile)
+		if err != nil {
+			t.Fatalf("Failed to get file info: %v", err)
+		}
+
+		if info.IsFlintVault {
+			t.Errorf("Non-vault file incorrectly identified as vault")
+		}
+	})
+
+	// Test with non-existent file
+	t.Run("NonExistentFile", func(t *testing.T) {
+		nonExistentFile := filepath.Join(helper.tmpDir, "nonexistent.dat")
+
+		_, err := vault.GetVaultInfo(nonExistentFile)
+		if err == nil {
+			t.Errorf("Expected error for non-existent file")
+		}
+	})
 }
