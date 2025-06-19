@@ -6,16 +6,24 @@
 // This application allows users to:
 //   - Create encrypted vaults protected by passwords
 //   - Add files and directories to vaults
-//   - List vault contents
-//   - Extract files from vaults (all or specific)
+//   - List vault contents with compression ratios
+//   - Extract files from vaults (all or specific) with integrity verification
 //   - Remove files from vaults
+//   - Get vault information without password
 //
 // Security features:
 //   - AES-256-GCM authenticated encryption
 //   - PBKDF2 key derivation with 100,000 iterations
+//   - SHA-256 integrity verification for all files
 //   - Cryptographically secure random salt and nonce generation
 //   - Memory safety with sensitive data clearing
 //   - Secure password input (hidden from terminal)
+//
+// Performance features:
+//   - Optimized architecture for large files
+//   - Streaming I/O operations for memory efficiency
+//   - Gzip compression to reduce vault size
+//   - Metadata-only operations for instant listing
 //
 // Usage:
 //
@@ -29,6 +37,7 @@
 //	extract - Extract all files from vault
 //	get     - Extract specific file or directory
 //	remove  - Remove file or directory from vault
+//	info    - Show vault file information
 //
 // For detailed usage information, run:
 //

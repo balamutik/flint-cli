@@ -177,23 +177,21 @@ func Run() {
 						}
 					}
 
-					data, err := vault.ListVault(vaultPath, password)
+					entries, err := vault.ListVault(vaultPath, password)
 					if err != nil {
 						return fmt.Errorf("vault read error: %w", err)
 					}
 
 					fmt.Printf("📦 Vault: %s\n", vaultPath)
-					fmt.Printf("📅 Created: %s\n", data.CreatedAt.Format("2006-01-02 15:04:05"))
-					fmt.Printf("💬 Comment: %s\n", data.Comment)
-					fmt.Printf("📁 Contents (%d items):\n\n", len(data.Entries))
+					fmt.Printf("📁 Contents (%d items):\n\n", len(entries))
 
-					if len(data.Entries) == 0 {
+					if len(entries) == 0 {
 						fmt.Println("  Vault is empty")
 						return nil
 					}
 
 					// Display list of files and directories
-					for _, entry := range data.Entries {
+					for _, entry := range entries {
 						icon := "📄"
 						if entry.IsDir {
 							icon = "📁"
@@ -248,7 +246,7 @@ func Run() {
 
 					fmt.Printf("Extracting all files to directory: %s\n", outputDir)
 
-					if err := vault.ExtractVault(vaultPath, password, outputDir); err != nil {
+					if err := vault.ExtractFromVault(vaultPath, password, outputDir); err != nil {
 						return fmt.Errorf("extraction error: %w", err)
 					}
 
@@ -302,7 +300,7 @@ func Run() {
 
 					fmt.Printf("Extracting '%s' to directory: %s\n", targetPath, outputDir)
 
-					if err := vault.ExtractSpecific(vaultPath, password, targetPath, outputDir); err != nil {
+					if err := vault.GetFromVault(vaultPath, password, outputDir, []string{targetPath}); err != nil {
 						return fmt.Errorf("extraction error: %w", err)
 					}
 
@@ -349,7 +347,7 @@ func Run() {
 
 					fmt.Printf("Removing '%s' from vault...\n", targetPath)
 
-					if err := vault.RemoveFromVault(vaultPath, password, targetPath); err != nil {
+					if err := vault.RemoveFromVault(vaultPath, password, []string{targetPath}); err != nil {
 						return fmt.Errorf("removal error: %w", err)
 					}
 
@@ -443,4 +441,27 @@ func formatNumber(num int64) string {
 		result = append(result, digit)
 	}
 	return string(result)
+}
+
+// formatFileSize formats file size in human-readable format
+func formatFileSize(size int64) string {
+	const (
+		KB = 1024
+		MB = KB * 1024
+		GB = MB * 1024
+		TB = GB * 1024
+	)
+
+	switch {
+	case size >= TB:
+		return fmt.Sprintf("%.1fTB", float64(size)/TB)
+	case size >= GB:
+		return fmt.Sprintf("%.1fGB", float64(size)/GB)
+	case size >= MB:
+		return fmt.Sprintf("%.1fMB", float64(size)/MB)
+	case size >= KB:
+		return fmt.Sprintf("%.1fKB", float64(size)/KB)
+	default:
+		return fmt.Sprintf("%dB", size)
+	}
 }

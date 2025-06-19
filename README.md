@@ -13,12 +13,14 @@ This code is fully generated with AI, but it works!
 
 - 🔒 **Military-grade encryption** using AES-256-GCM
 - 🔑 **Strong password derivation** with PBKDF2 (100,000 iterations)
+- 🛡️ **SHA-256 integrity verification** for all files
 - 📁 **Directory support** with recursive file addition
 - 🗜️ **Built-in compression** using gzip
+- ⚡ **Streaming I/O operations** for memory efficiency with large files
 - 🌍 **Unicode support** for international file names
 - 🔍 **Selective extraction** of specific files or directories
 - 🛡️ **Authenticated encryption** preventing data tampering
-- 🚀 **High performance** with efficient memory usage
+- 🚀 **Optimized architecture** supports files of any size
 - 🔧 **Simple CLI interface** for easy usage
 
 ## 🏗️ Architecture
