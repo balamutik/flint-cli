@@ -201,7 +201,7 @@ Full Unicode support including:
 
 ```bash
 # Clone and enter directory
-git clone https://github.com/yourusername/flint-vault.git
+git clone https://github.com/balamutik/flint-vault.git
 cd flint-vault
 
 # Download dependencies
