@@ -41,7 +41,7 @@ Flint Vault uses a layered architecture:
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/flint-vault.git
+git clone https://github.com/balamutik/flint-vault.git
 cd flint-vault
 
 # Build the application
