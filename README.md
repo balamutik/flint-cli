@@ -7,6 +7,8 @@
 
 **Flint Vault** is a military-grade encrypted file storage system implemented in Go. It provides secure, password-protected storage for files and directories using advanced cryptographic algorithms.
 
+This code is fully generated with AI, but it works! 
+
 ## ✨ Features
 
 - 🔒 **Military-grade encryption** using AES-256-GCM
@@ -211,8 +213,8 @@ This project is a testament to the power of **human-AI collaboration**!
 
 **The Vibe:**
 ```
-Developer: "Я хочу крутое хранилище с шифрованием!"
-Claude: "Давайте сделаем нечто эпическое! 🚀"
+Developer: "I want cool vault with encryption!"
+Claude: "Lets make something epic! 🚀"
 *intensive keyboard typing sounds*
 *security algorithms flying everywhere*
 *documentation materializing*
