@@ -25,17 +25,17 @@ Download pre-built binaries from the releases page:
 
 ```bash
 # Linux (x64)
-wget https://github.com/yourusername/flint-vault/releases/latest/download/flint-vault-linux-amd64
+wget https://github.com/balamutik/flint-vault/releases/latest/download/flint-vault-linux-amd64
 chmod +x flint-vault-linux-amd64
 sudo mv flint-vault-linux-amd64 /usr/local/bin/flint-vault
 
 # macOS (Intel)
-wget https://github.com/yourusername/flint-vault/releases/latest/download/flint-vault-darwin-amd64
+wget https://github.com/balamutik/flint-vault/releases/latest/download/flint-vault-darwin-amd64
 chmod +x flint-vault-darwin-amd64
 sudo mv flint-vault-darwin-amd64 /usr/local/bin/flint-vault
 
 # macOS (Apple Silicon)
-wget https://github.com/yourusername/flint-vault/releases/latest/download/flint-vault-darwin-arm64
+wget https://github.com/balamutik/flint-vault/releases/latest/download/flint-vault-darwin-arm64
 chmod +x flint-vault-darwin-arm64
 sudo mv flint-vault-darwin-arm64 /usr/local/bin/flint-vault
 
@@ -70,7 +70,7 @@ sudo pacman -S go
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/flint-vault.git
+git clone https://github.com/balamutik/flint-vault.git
 cd flint-vault
 
 # Download dependencies
@@ -94,7 +94,7 @@ If you have Go installed and configured:
 
 ```bash
 # Install directly from Git
-go install github.com/yourusername/flint-vault/cmd@latest
+go install github.com/balamutik/flint-vault/cmd@latest
 
 # The binary will be installed to $GOPATH/bin or $HOME/go/bin
 ```
@@ -105,7 +105,7 @@ go install github.com/yourusername/flint-vault/cmd@latest
 
 ```bash
 # Add tap (if available)
-brew tap yourusername/flint-vault
+brew tap balamutik/flint-vault
 brew install flint-vault
 ```
 
@@ -226,7 +226,7 @@ For contributors and developers:
 
 ```bash
 # Clone with all submodules
-git clone --recursive https://github.com/yourusername/flint-vault.git
+git clone --recursive https://github.com/balamutik/flint-vault.git
 cd flint-vault
 
 # Install development dependencies
@@ -290,9 +290,9 @@ export FLINT_VAULT_STREAMING=1
 ### Getting Help
 
 1. **Check the FAQ**: [docs/FAQ.md](FAQ.md)
-2. **Search existing issues**: [GitHub Issues](https://github.com/yourusername/flint-vault/issues)
+2. **Search existing issues**: [GitHub Issues](https://github.com/balamutik/flint-vault/issues)
 3. **Create new issue**: Provide system info and error details
-4. **Join discussions**: [GitHub Discussions](https://github.com/yourusername/flint-vault/discussions)
+4. **Join discussions**: [GitHub Discussions](https://github.com/balamutik/flint-vault/discussions)
 
 ### System Information
 
@@ -313,7 +313,7 @@ echo $PATH
 
 ```bash
 # Download latest binary and replace existing one
-wget https://github.com/yourusername/flint-vault/releases/latest/download/flint-vault-linux-amd64
+wget https://github.com/balamutik/flint-vault/releases/latest/download/flint-vault-linux-amd64
 chmod +x flint-vault-linux-amd64
 sudo mv flint-vault-linux-amd64 /usr/local/bin/flint-vault
 ```
@@ -334,7 +334,7 @@ sudo cp flint-vault /usr/local/bin/
 brew upgrade flint-vault
 
 # Go install
-go install github.com/yourusername/flint-vault/cmd@latest
+go install github.com/balamutik/flint-vault/cmd@latest
 ```
 
 ## 🗑️ Uninstallation
