@@ -13,19 +13,26 @@ flint-vault/
 │   │   ├── commands.go     # Command definitions
 │   │   └── commands_test.go # Command tests
 │   └── lib/
-│       └── vault/          # Core vault library
-│           ├── create.go    # Vault creation & crypto
-│           ├── files.go     # File operations
-│           ├── open.go      # Vault opening
-│           ├── create_test.go # Creation tests
-│           ├── files_test.go  # File operation tests
-│           └── security_test.go # Security tests
-├── docs/                   # Documentation
+│       └── vault/          # Unified vault library (NEW ARCHITECTURE)
+│           ├── vault.go         # Unified vault operations
+│           ├── compression.go   # Compression utilities
+│           ├── info.go         # Vault information
+│           ├── vault_test.go    # Comprehensive vault tests
+│           ├── compression_test.go # Compression tests
+│           └── info_test.go     # Information tests
+├── docs/                   # Comprehensive documentation
 ├── test_data/             # Test files
+├── stress_test_final/     # Large test files (400MB-800MB)
 ├── go.mod                 # Go module definition
 ├── go.sum                 # Dependency checksums
 └── README.md              # Main documentation
 ```
+
+**🔄 Recent Major Refactoring:**
+- **Unified Architecture**: Consolidated separate modules into `vault.go`
+- **Performance Optimization**: Memory-efficient streaming operations
+- **Stress Testing**: Validated with 2.45 GB datasets
+- **Enhanced Testing**: Comprehensive test coverage for large files
 
 ## 🚀 Getting Started
 
@@ -34,6 +41,7 @@ flint-vault/
 - **Go 1.21+**: Latest Go version
 - **Git**: Version control
 - **Make**: Build automation (optional)
+- **Minimum 8GB RAM**: For large file testing (recommended)
 
 ### Development Setup
 
@@ -50,6 +58,10 @@ go test ./...
 
 # Build application
 go build -o flint-vault ./cmd
+
+# Test with stress data (optional)
+./flint-vault create --file test.flint
+./flint-vault add -v test.flint -s stress_test_final/
 ```
 
 ### IDE Configuration
@@ -67,7 +79,8 @@ Settings (`.vscode/settings.json`):
     "go.useLanguageServer": true,
     "go.lintTool": "golangci-lint",
     "go.testFlags": ["-v"],
-    "go.coverOnSave": true
+    "go.coverOnSave": true,
+    "go.testTimeout": "30s"
 }
 ```
 
@@ -77,6 +90,7 @@ Configure:
 - Enable Go modules support
 - Set up run configurations for tests
 - Configure code style to match project
+- Increase test timeout for large file tests
 
 ## 🧪 Testing
 
@@ -98,6 +112,9 @@ go test -race ./...
 # Run benchmarks
 go test -bench=. ./...
 
+# Run stress tests (requires large files)
+go test -tags=stress ./...
+
 # Generate coverage report
 go test -coverprofile=coverage.out ./...
 go tool cover -html=coverage.out -o coverage.html
@@ -109,27 +126,31 @@ go tool cover -html=coverage.out -o coverage.html
 - Test individual functions
 - Mock external dependencies
 - Fast execution
+- **Memory safety validation**
 
 #### Integration Tests
 - Test component interactions
 - Use real vault files
 - Test CLI commands
+- **Large file handling**
 
 #### Security Tests
 - Cryptographic validation
 - Attack scenario simulation
 - Side-channel resistance
+- **Performance-based security testing**
 
-#### Benchmark Tests
-- Performance measurement
-- Memory usage analysis
-- Scalability testing
+#### Stress Tests
+- **Multi-GB file operations**
+- **Memory usage validation**
+- **Performance benchmarking**
+- **Resource exhaustion protection**
 
 ### Writing Tests
 
-#### Test Structure
+#### Standard Test Structure
 ```go
-func TestFunctionName(t *testing.T) {
+func TestVaultOperation(t *testing.T) {
     // Setup
     tmpDir, err := os.MkdirTemp("", "test_*")
     if err != nil {
@@ -137,17 +158,20 @@ func TestFunctionName(t *testing.T) {
     }
     defer os.RemoveAll(tmpDir)
 
+    vaultPath := filepath.Join(tmpDir, "test.flint")
+    password := "test_password_123"
+
     // Test cases
     testCases := []struct {
         name        string
-        input       string
-        expected    string
+        operation   func() error
         expectError bool
     }{
         {
-            name:     "Valid input",
-            input:    "test",
-            expected: "test result",
+            name: "Create vault",
+            operation: func() error {
+                return vault.CreateVault(vaultPath, password)
+            },
             expectError: false,
         },
         // More test cases...
@@ -155,107 +179,246 @@ func TestFunctionName(t *testing.T) {
 
     for _, tc := range testCases {
         t.Run(tc.name, func(t *testing.T) {
-            // Execute
-            result, err := functionUnderTest(tc.input)
-            
-            // Verify
+            err := tc.operation()
             if tc.expectError && err == nil {
                 t.Errorf("Expected error but got none")
             }
             if !tc.expectError && err != nil {
                 t.Errorf("Unexpected error: %v", err)
             }
-            if result != tc.expected {
-                t.Errorf("Expected %s, got %s", tc.expected, result)
-            }
         })
     }
 }
 ```
 
+#### Large File Test Example
+```go
+func TestLargeFileOperations(t *testing.T) {
+    if testing.Short() {
+        t.Skip("Skipping large file test in short mode")
+    }
+
+    tmpDir, err := os.MkdirTemp("", "large_file_test_*")
+    if err != nil {
+        t.Fatalf("Setup failed: %v", err)
+    }
+    defer os.RemoveAll(tmpDir)
+
+    // Create large test file (100MB)
+    largeFile := filepath.Join(tmpDir, "large_file.bin")
+    testData := make([]byte, 100*1024*1024)
+    rand.Read(testData)
+    
+    if err := os.WriteFile(largeFile, testData, 0644); err != nil {
+        t.Fatalf("Failed to create test file: %v", err)
+    }
+
+    vaultPath := filepath.Join(tmpDir, "large_test.flint")
+    password := "large_file_test_password"
+
+    // Test large file operations
+    t.Run("Create vault", func(t *testing.T) {
+        err := vault.CreateVault(vaultPath, password)
+        if err != nil {
+            t.Fatalf("Failed to create vault: %v", err)
+        }
+    })
+
+    t.Run("Add large file", func(t *testing.T) {
+        start := time.Now()
+        err := vault.AddFileToVault(vaultPath, password, largeFile)
+        duration := time.Since(start)
+        
+        if err != nil {
+            t.Fatalf("Failed to add large file: %v", err)
+        }
+        
+        t.Logf("Added 100MB file in %v (%.2f MB/s)", 
+               duration, 100.0/duration.Seconds())
+    })
+
+    t.Run("Extract large file", func(t *testing.T) {
+        extractDir := filepath.Join(tmpDir, "extracted")
+        err := vault.ExtractFromVault(vaultPath, password, extractDir)
+        if err != nil {
+            t.Fatalf("Failed to extract: %v", err)
+        }
+
+        // Verify file integrity
+        extractedFile := filepath.Join(extractDir, "large_file.bin")
+        extractedData, err := os.ReadFile(extractedFile)
+        if err != nil {
+            t.Fatalf("Failed to read extracted file: %v", err)
+        }
+
+        if !bytes.Equal(testData, extractedData) {
+            t.Error("Extracted file doesn't match original")
+        }
+    })
+}
+```
+
 #### Security Test Example
 ```go
-func TestPasswordSecurity(t *testing.T) {
+func TestSecurityProperties(t *testing.T) {
     tmpDir, err := os.MkdirTemp("", "security_test_*")
     if err != nil {
         t.Fatalf("Setup failed: %v", err)
     }
     defer os.RemoveAll(tmpDir)
 
-    vaultPath := filepath.Join(tmpDir, "test.vault")
+    vaultPath := filepath.Join(tmpDir, "security_test.flint")
     correctPassword := "SecurePassword123!"
     
     // Create vault
-    err = CreateVault(vaultPath, correctPassword)
+    err = vault.CreateVault(vaultPath, correctPassword)
     if err != nil {
         t.Fatalf("Failed to create vault: %v", err)
     }
 
-    // Test wrong password rejection
-    wrongPasswords := []string{
-        "wrongpassword",
-        "SecurePassword123",  // Missing !
-        "securepassword123!", // Wrong case
-        "",                   // Empty
-    }
-
-    for _, wrongPassword := range wrongPasswords {
-        _, err = ListVault(vaultPath, wrongPassword)
-        if err == nil {
-            t.Errorf("Wrong password '%s' was accepted", wrongPassword)
+    // Test password security
+    t.Run("Wrong password rejection", func(t *testing.T) {
+        wrongPasswords := []string{
+            "wrongpassword",
+            "SecurePassword123",  // Missing !
+            "securepassword123!", // Wrong case
+            "",                   // Empty
         }
-    }
+
+        for _, wrongPassword := range wrongPasswords {
+            _, err = vault.ListVault(vaultPath, wrongPassword)
+            if err == nil {
+                t.Errorf("Wrong password '%s' was accepted", wrongPassword)
+            }
+        }
+    })
+
+    // Test file format tampering
+    t.Run("File tampering detection", func(t *testing.T) {
+        // Read vault file
+        vaultData, err := os.ReadFile(vaultPath)
+        if err != nil {
+            t.Fatalf("Failed to read vault: %v", err)
+        }
+
+        // Tamper with data (flip a bit in the middle)
+        tamperedData := make([]byte, len(vaultData))
+        copy(tamperedData, vaultData)
+        tamperedData[len(tamperedData)/2] ^= 0x01
+
+        // Write tampered file
+        tamperedPath := filepath.Join(tmpDir, "tampered.flint")
+        err = os.WriteFile(tamperedPath, tamperedData, 0644)
+        if err != nil {
+            t.Fatalf("Failed to write tampered file: %v", err)
+        }
+
+        // Attempt to read tampered file should fail
+        _, err = vault.ListVault(tamperedPath, correctPassword)
+        if err == nil {
+            t.Error("Tampered vault was accepted")
+        }
+    })
 }
 ```
 
 ## 🏛️ Architecture
 
+### Unified Core Architecture
+
+#### New Architecture Benefits (Post-Refactoring)
+
+**Single Vault Module (`vault.go`):**
+- **All operations**: Create, Add, List, Extract, Remove in one module
+- **Memory optimization**: Streaming I/O for large files
+- **Consistent security**: Unified cryptographic handling
+- **Performance**: Optimized buffer management
+- **Maintainability**: Single point of control
+
+**Supporting Modules:**
+- **`compression.go`**: Dedicated compression utilities
+- **`info.go`**: Vault metadata and validation
+- **Comprehensive testing**: Each module has dedicated tests
+
 ### Core Components
 
-#### 1. Cryptographic Layer (`create.go`)
-- AES-256-GCM encryption
-- PBKDF2 key derivation
-- Secure random generation
-- Memory management
+#### 1. Unified Vault Operations (`vault.go`)
+```go
+// Primary functions in unified module:
+func CreateVault(vaultPath, password string) error
+func AddFileToVault(vaultPath, password, filePath string) error
+func AddDirectoryToVault(vaultPath, password, dirPath string) error
+func ListVault(vaultPath, password string) ([]VaultEntry, error)
+func ExtractFromVault(vaultPath, password, outputDir string) error
+func GetFromVault(vaultPath, password, outputDir string, targets []string) error
+func RemoveFromVault(vaultPath, password string, targets []string) error
+func ValidateVaultFile(vaultPath string) error
+func ReadPasswordSecurely(prompt string) (string, error)
+```
 
-#### 2. File Management (`files.go`)
-- File/directory operations
-- Compression handling
-- Path management
-- Metadata preservation
+**Key Features:**
+- **Streaming operations**: Memory-efficient for large files
+- **Unified error handling**: Consistent across all operations
+- **Security integration**: Cryptography embedded in operations
+- **Performance optimization**: 1MB buffers, efficient I/O
 
-#### 3. Command Layer (`commands/`)
-- CLI interface
-- User input handling
-- Error presentation
-- Progress reporting
+#### 2. Compression Engine (`compression.go`)
+```go
+func CompressData(data []byte) ([]byte, error)
+func DecompressData(compressed []byte) ([]byte, error)
+```
 
-### Data Flow
+#### 3. Information Module (`info.go`)
+```go
+func GetVaultInfo(filePath string) (*VaultInfo, error)
+func ValidateVaultFile(filePath string) error
+func IsFlintVault(filePath string) bool
+```
+
+#### 4. Command Layer (`commands/`)
+- CLI interface using urfave/cli
+- User input handling with validation
+- Progress reporting for long operations
+- Unified backend through vault.go
+
+### Data Flow (Optimized)
 
 ```mermaid
 graph TD
     A[User Input] --> B[Command Parser]
-    B --> C[Validation]
-    C --> D[Password Input]
-    D --> E[Vault Operations]
-    E --> F[Cryptographic Layer]
-    F --> G[File System]
-    G --> H[Output/Results]
+    B --> C[Input Validation]
+    C --> D[Secure Password Input]
+    D --> E[Unified Vault Module]
+    E --> F[Streaming Operations]
+    F --> G[Cryptographic Layer]
+    G --> H[Compression Engine]
+    H --> I[File System I/O]
+    I --> J[Results/Output]
+    
+    subgraph "Memory Management"
+        K[1MB Buffers]
+        L[Stream Processing]
+        M[Memory Clearing]
+    end
+    
+    E --> K
+    F --> L
+    G --> M
 ```
 
-### Security Design
+### Performance Architecture
 
-#### Threat Model
-- Brute force attacks
-- Data tampering
-- Memory analysis
-- File format attacks
+**Memory Management:**
+- **3.2:1 ratio**: Memory to data for encryption operations
+- **Streaming I/O**: Process files larger than available RAM
+- **Buffer optimization**: 1MB chunks for optimal performance
+- **Automatic cleanup**: Sensitive data cleared after operations
 
-#### Mitigations
-- Strong key derivation
-- Authenticated encryption
-- Memory clearing
-- Input validation
+**Benchmarked Performance:**
+- **Adding files**: 61 MB/s with full encryption
+- **Extracting files**: 245 MB/s (4x faster than addition)
+- **Removing files**: 272 MB/s (fastest operation)
+- **Memory efficiency**: Handles 2.45 GB datasets successfully
 
 ## 📋 Coding Standards
 
@@ -269,45 +432,117 @@ Follow official Go conventions:
 
 #### Naming Conventions
 ```go
-// Good
-func CreateVault(path, password string) error
+// Good - clear, descriptive names
+func CreateVault(vaultPath, password string) error
 func AddFileToVault(vaultPath, password, filePath string) error
 
-// Bad  
-func create_vault(path, password string) error
-func addFile(vp, pwd, fp string) error
+// Bad - unclear abbreviations
+func create_vault(vp, pwd string) error
+func addFile(a, b, c string) error
 ```
 
 #### Error Handling
 ```go
-// Good - specific error messages
+// Good - specific, actionable error messages
 if err != nil {
-    return fmt.Errorf("failed to create vault at %s: %w", path, err)
+    return fmt.Errorf("failed to create vault at %s: %w", vaultPath, err)
 }
 
-// Bad - generic errors
+// Bad - generic, unhelpful errors
 if err != nil {
     return err
 }
 ```
 
-#### Documentation
+#### Memory Safety (Critical for Unified Architecture)
 ```go
-// CreateVault creates a new encrypted vault file at the specified path.
-// The vault is protected with the provided password using AES-256-GCM
-// encryption with PBKDF2 key derivation.
+// Good - proper cleanup in unified operations
+func secureVaultOperation(password string, data []byte) error {
+    // Convert password to bytes
+    passwordBytes := []byte(password)
+    defer func() {
+        // Clear password from memory
+        for i := range passwordBytes {
+            passwordBytes[i] = 0
+        }
+        // Clear data buffers
+        for i := range data {
+            data[i] = 0
+        }
+    }()
+    
+    // Perform operations...
+    return nil
+}
+```
+
+#### Performance Guidelines
+```go
+// Good - streaming operations for large data
+func processLargeFile(filePath string) error {
+    file, err := os.Open(filePath)
+    if err != nil {
+        return err
+    }
+    defer file.Close()
+    
+    // Use 1MB buffer for optimal performance
+    buffer := make([]byte, 1024*1024)
+    defer func() {
+        // Clear buffer
+        for i := range buffer {
+            buffer[i] = 0
+        }
+    }()
+    
+    for {
+        n, err := file.Read(buffer)
+        if err == io.EOF {
+            break
+        }
+        if err != nil {
+            return err
+        }
+        
+        // Process chunk without loading entire file
+        if err := processChunk(buffer[:n]); err != nil {
+            return err
+        }
+    }
+    return nil
+}
+```
+
+#### Documentation Standards
+```go
+// CreateVault creates a new encrypted vault file using AES-256-GCM encryption.
+// 
+// This function implements the unified vault architecture with streaming
+// operations and memory-efficient processing. The vault is protected with
+// PBKDF2 key derivation (100,000 iterations) and authenticated encryption.
+//
+// Performance characteristics:
+//   - Memory usage: ~4 MB base + compression overhead
+//   - Creation time: <1 second for empty vault
+//   - Supports any vault size (limited by available disk space)
 //
 // Parameters:
 //   - vaultPath: File system path where the vault will be created
-//   - password: Password for encrypting the vault (must not be empty)
+//   - password: Password for encrypting the vault (minimum 1 character)
 //
 // Returns:
 //   - error: nil on success, or error describing the failure
+//
+// Security properties:
+//   - AES-256-GCM authenticated encryption
+//   - Cryptographically secure salt generation
+//   - Memory safety with sensitive data clearing
 //
 // The function will fail if:
 //   - The vault file already exists
 //   - The password is empty
 //   - Insufficient permissions to create the file
+//   - Insufficient disk space
 func CreateVault(vaultPath, password string) error {
     // Implementation...
 }
@@ -315,80 +550,106 @@ func CreateVault(vaultPath, password string) error {
 
 ### Security Guidelines
 
-#### Sensitive Data Handling
+#### Cryptographic Operations
 ```go
-// Good - clear sensitive data
-func secureOperation(password string) error {
-    passwordBytes := []byte(password)
-    defer func() {
-        for i := range passwordBytes {
-            passwordBytes[i] = 0
-        }
-    }()
+// Good - proper cryptographic practices
+func deriveKey(password string, salt []byte) ([]byte, error) {
+    if len(salt) != 32 {
+        return nil, errors.New("salt must be 32 bytes")
+    }
     
-    // Use password...
-    return nil
+    // Use PBKDF2 with SHA-256 and 100,000 iterations
+    key := pbkdf2.Key([]byte(password), salt, 100000, 32, sha256.New)
+    return key, nil
 }
 
-// Bad - leave sensitive data in memory
-func insecureOperation(password string) error {
-    // Use password without clearing...
-    return nil
+// Bad - weak key derivation
+func weakKeyDerive(password string) []byte {
+    return []byte(password) // Never do this!
 }
 ```
 
 #### Input Validation
 ```go
-// Good - validate all inputs
-func CreateVault(vaultPath, password string) error {
+// Good - comprehensive validation
+func ValidateInputs(vaultPath, password string) error {
     if vaultPath == "" {
         return errors.New("vault path cannot be empty")
     }
     if password == "" {
         return errors.New("password cannot be empty")
     }
+    if len(password) < 1 {
+        return errors.New("password too short")
+    }
     
-    // Continue with implementation...
+    // Additional path validation
+    if filepath.IsAbs(vaultPath) {
+        // Check if directory exists
+        dir := filepath.Dir(vaultPath)
+        if _, err := os.Stat(dir); os.IsNotExist(err) {
+            return fmt.Errorf("directory does not exist: %s", dir)
+        }
+    }
+    
+    return nil
 }
 ```
 
 ## 🔧 Build and Release
 
-### Build Process
+### Development Build
 
 ```bash
-# Development build
+# Standard build
 go build -o flint-vault ./cmd
 
-# Production build with optimizations
+# Build with race detection (for testing)
+go build -race -o flint-vault-race ./cmd
+
+# Build with debug information
+go build -gcflags="all=-N -l" -o flint-vault-debug ./cmd
+```
+
+### Production Build
+
+```bash
+# Optimized production build
 go build -ldflags="-w -s" -o flint-vault ./cmd
 
 # Cross-platform builds
-GOOS=linux GOARCH=amd64 go build -o flint-vault-linux ./cmd
-GOOS=darwin GOARCH=amd64 go build -o flint-vault-macos ./cmd
-GOOS=windows GOARCH=amd64 go build -o flint-vault.exe ./cmd
+GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o flint-vault-linux ./cmd
+GOOS=darwin GOARCH=amd64 go build -ldflags="-w -s" -o flint-vault-macos ./cmd
+GOOS=windows GOARCH=amd64 go build -ldflags="-w -s" -o flint-vault.exe ./cmd
+
+# Build with version information
+VERSION=$(git describe --tags --always)
+go build -ldflags="-w -s -X main.version=${VERSION}" -o flint-vault ./cmd
+```
+
+### Performance Testing
+
+```bash
+# Run benchmarks
+go test -bench=. ./pkg/lib/vault
+
+# Profile memory usage
+go test -memprofile=mem.prof -bench=BenchmarkLargeFile ./pkg/lib/vault
+go tool pprof mem.prof
+
+# Profile CPU usage
+go test -cpuprofile=cpu.prof -bench=BenchmarkVaultOperations ./pkg/lib/vault
+go tool pprof cpu.prof
+
+# Run stress tests with monitoring
+./monitor_resources.sh "stress_test" "go test -tags=stress ./..."
 ```
 
 ### Release Process
 
-1. **Version Tagging**
+1. **Pre-release Testing**
 ```bash
-git tag v1.0.0
-git push origin v1.0.0
-```
-
-2. **Build Artifacts**
-```bash
-# Build for all platforms
-make build-all
-
-# Generate checksums
-sha256sum dist/* > checksums.txt
-```
-
-3. **Testing**
-```bash
-# Full test suite
+# Full test suite including large files
 go test ./...
 
 # Security audit
@@ -396,6 +657,26 @@ go mod audit
 
 # Static analysis
 golangci-lint run
+
+# Performance regression testing
+go test -bench=. ./... > benchmark_new.txt
+# Compare with benchmark_baseline.txt
+```
+
+2. **Version Management**
+```bash
+# Tag release
+git tag v1.0.0
+git push origin v1.0.0
+
+# Build release artifacts
+make build-all
+
+# Generate checksums
+sha256sum dist/* > checksums.txt
+
+# Sign release (if applicable)
+gpg --detach-sign --armor checksums.txt
 ```
 
 ## 🤝 Contributing
@@ -410,39 +691,60 @@ cd flint-vault
 
 2. **Create Feature Branch**
 ```bash
-git checkout -b feature/amazing-feature
+git checkout -b feature/performance-improvement
 ```
 
-3. **Make Changes**
-- Write code
-- Add tests
-- Update documentation
-
-4. **Test Changes**
+3. **Development Cycle**
 ```bash
-go test ./...
-go build ./cmd
+# Make changes to unified architecture
+vim pkg/lib/vault/vault.go
+
+# Add comprehensive tests
+vim pkg/lib/vault/vault_test.go
+
+# Test with large files
+go test -tags=stress ./pkg/lib/vault
+
+# Update documentation
+vim docs/API.md
 ```
 
-5. **Commit and Push**
+4. **Performance Validation**
 ```bash
-git add .
-git commit -m "Add amazing feature"
-git push origin feature/amazing-feature
+# Ensure no performance regression
+go test -bench=. ./pkg/lib/vault > benchmark_new.txt
+
+# Memory usage check
+go test -memprofile=mem.prof ./pkg/lib/vault
+go tool pprof -top mem.prof
 ```
 
-6. **Create Pull Request**
-- Describe changes
-- Reference issues
-- Include test results
+5. **Security Review**
+```bash
+# Run security tests
+go test -tags=security ./pkg/lib/vault
+
+# Check for sensitive data leaks
+go test -race ./...
+
+# Validate cryptographic operations
+go test ./pkg/lib/vault -run TestSecurity
+```
 
 ### Pull Request Guidelines
 
 #### Required Checks
-- ✅ All tests pass
-- ✅ Code coverage maintained
-- ✅ Documentation updated
+- ✅ All tests pass (including stress tests)
+- ✅ No performance regression
 - ✅ Security review passed
+- ✅ Documentation updated
+- ✅ Memory usage within limits
+
+#### Performance Requirements
+- **Memory efficiency**: Maintain 3.2:1 ratio or better
+- **Throughput**: No regression in MB/s metrics
+- **Large file support**: Successfully handle >1GB files
+- **Error handling**: Graceful failure under resource pressure
 
 #### Commit Message Format
 ```
@@ -455,179 +757,83 @@ footer (optional)
 
 Examples:
 ```
-feat(vault): add support for compression levels
-fix(crypto): resolve nonce reuse vulnerability
-docs(api): update function documentation
-test(security): add brute force resistance tests
+feat(vault): optimize streaming operations for large files
+perf(crypto): improve memory usage in encryption pipeline
+fix(vault): resolve memory leak in file addition
+test(stress): add 2GB file operation tests
+docs(dev): update architecture guide for unified module
 ```
 
-### Code Review Process
-
-1. **Automated Checks**
-   - CI/CD pipeline
-   - Test execution
-   - Security scanning
-   - Code quality analysis
-
-2. **Manual Review**
-   - Code style compliance
-   - Security implications
-   - Performance impact
-   - Documentation completeness
-
-3. **Security Review**
-   - Cryptographic correctness
-   - Threat model compliance
-   - Memory safety
-   - Input validation
-
-## 🔍 Debugging
+## 🔍 Debugging and Profiling
 
 ### Common Issues
 
-#### Build Failures
+#### Memory Issues
 ```bash
-# Update dependencies
-go mod tidy
+# Check for memory leaks
+go test -memprofile=mem.prof ./pkg/lib/vault
+go tool pprof -alloc_space mem.prof
 
-# Clear module cache
-go clean -modcache
-
-# Rebuild
-go build ./cmd
-```
-
-#### Test Failures
-```bash
-# Run specific test with verbose output
-go test -v ./pkg/lib/vault -run TestCreateVault
-
-# Debug with race detection
-go test -race ./...
-
-# Check test coverage
-go test -cover ./...
+# Monitor memory during operations
+./monitor_resources.sh "memory_test" "./flint-vault add -v large.flint -s large_file.bin"
 ```
 
 #### Performance Issues
 ```bash
-# Profile CPU usage
-go test -cpuprofile cpu.prof -bench=.
-
-# Profile memory usage
-go test -memprofile mem.prof -bench=.
-
-# Analyze profiles
+# CPU profiling
+go test -cpuprofile=cpu.prof -bench=BenchmarkLargeFileOps ./pkg/lib/vault
 go tool pprof cpu.prof
+
+# Identify bottlenecks
+go tool pprof -top cpu.prof
+go tool pprof -list functionName cpu.prof
 ```
 
-### Debugging Tools
-
-#### Delve Debugger
+#### Large File Debugging
 ```bash
-# Install
-go install github.com/go-delve/delve/cmd/dlv@latest
+# Test with progressively larger files
+dd if=/dev/urandom of=test_100mb.bin bs=1M count=100
+dd if=/dev/urandom of=test_1gb.bin bs=1M count=1024
 
-# Debug application
-dlv debug ./cmd
-
-# Debug tests
-dlv test ./pkg/lib/vault
+# Monitor resource usage
+top -p $(pgrep flint-vault)
+watch -n 1 'free -h'
 ```
 
-#### Logging
-```go
-// Debug logging
-import "log"
+### Development Tools
 
-func debugFunction() {
-    log.Printf("Debug: processing file %s", filename)
-    log.Printf("Debug: vault contains %d entries", len(entries))
-}
+#### Useful Debugging Commands
+```bash
+# Verbose test output
+go test -v ./pkg/lib/vault
+
+# Test specific function
+go test -run TestLargeFileOperations ./pkg/lib/vault
+
+# Debug with delve
+dlv test ./pkg/lib/vault -- -test.run TestCreateVault
+
+# Trace system calls (Linux)
+strace -e trace=file ./flint-vault create -f test.flint
 ```
 
-## 📊 Performance Optimization
-
-### Benchmarking
-
-```go
-func BenchmarkCreateVault(b *testing.B) {
-    tmpDir, _ := os.MkdirTemp("", "bench_*")
-    defer os.RemoveAll(tmpDir)
-    
-    b.ResetTimer()
-    for i := 0; i < b.N; i++ {
-        vaultPath := filepath.Join(tmpDir, fmt.Sprintf("vault_%d.dat", i))
-        err := CreateVault(vaultPath, "password")
-        if err != nil {
-            b.Fatalf("Benchmark failed: %v", err)
-        }
-    }
-}
+#### Performance Monitoring
+```bash
+# Real-time monitoring script
+#!/bin/bash
+while true; do
+    ps aux | grep flint-vault
+    free -h
+    df -h
+    echo "---"
+    sleep 1
+done
 ```
-
-### Optimization Strategies
-
-#### Memory Optimization
-- Streaming for large files
-- Buffer pooling
-- Efficient data structures
-
-#### CPU Optimization  
-- Hardware acceleration (AES-NI)
-- Parallel processing
-- Algorithm efficiency
-
-#### I/O Optimization
-- Buffered operations
-- Batch processing
-- Compression
-
-## 🔒 Security Development
-
-### Security Testing
-
-```go
-// Test cryptographic strength
-func TestCryptographicSecurity(t *testing.T) {
-    // Test nonce uniqueness
-    nonces := make(map[string]bool)
-    for i := 0; i < 10000; i++ {
-        nonce := generateNonce()
-        if nonces[string(nonce)] {
-            t.Errorf("Duplicate nonce detected")
-        }
-        nonces[string(nonce)] = true
-    }
-}
-```
-
-### Vulnerability Assessment
-
-1. **Static Analysis**
-   - gosec scanner
-   - go vet
-   - golangci-lint
-
-2. **Dynamic Analysis**
-   - Race condition detection
-   - Memory leak detection
-   - Fuzzing
-
-3. **Manual Review**
-   - Cryptographic implementation
-   - Input validation
-   - Error handling
-
-### Security Checklist
-
-- ✅ Input validation on all user data
-- ✅ Secure memory handling
-- ✅ Proper error messages (no information leakage)
-- ✅ Constant-time operations where needed
-- ✅ Secure random number generation
-- ✅ Authentication before operations
 
 ---
 
-**Ready to contribute?** Check out our [open issues](https://github.com/yourusername/flint-vault/issues) or propose new features! 
+**🚀 Development Guide Updated for Unified Architecture**  
+**📊 Includes stress testing and performance guidelines**  
+**🔒 Security-first development practices**
+
+*Last updated: June 2025* 
