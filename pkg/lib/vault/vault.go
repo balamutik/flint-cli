@@ -2,6 +2,7 @@ package vault
 
 import (
 	"bytes"
+	"compress/gzip"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
@@ -300,10 +301,10 @@ func AddFileToVault(vaultPath, password, filePath string) error {
 		return fmt.Errorf("vault directory load error: %w", err)
 	}
 
-	// Calculate file hash and compress file data in streaming fashion
-	fileHash, compressedData, err := processFileForVault(filePath)
+	// First pass: calculate metadata (hash and compressed size) using streaming
+	fileHash, compressedSize, err := calculateFileMetadata(filePath)
 	if err != nil {
-		return fmt.Errorf("file processing error: %w", err)
+		return fmt.Errorf("metadata calculation error: %w", err)
 	}
 
 	// Create file entry with metadata (we'll calculate offset later)
@@ -312,10 +313,10 @@ func AddFileToVault(vaultPath, password, filePath string) error {
 		Name:           fileInfo.Name(),
 		IsDir:          false,
 		Size:           fileInfo.Size(),
-		CompressedSize: int64(len(compressedData)),
+		CompressedSize: compressedSize,
 		Mode:           uint32(fileInfo.Mode()),
 		ModTime:        fileInfo.ModTime(),
-		Offset:         0, // Will be set in updateVaultDirectoryWithFileData
+		Offset:         0, // Will be set in updateVaultDirectoryWithFileDataStreaming
 		SHA256Hash:     fileHash,
 	}
 
@@ -333,35 +334,269 @@ func AddFileToVault(vaultPath, password, filePath string) error {
 		vaultDir.Entries = append(vaultDir.Entries, entry) // Add new
 	}
 
-	// Save updated directory and append file data in one operation
-	return updateVaultDirectoryWithFileData(vaultPath, password, *vaultDir, compressedData)
+	// Second pass: stream compressed data directly to vault file
+	return addFileToVaultStreaming(vaultPath, password, *vaultDir, filePath)
 }
 
-// processFileForVault calculates hash and compresses file data
-func processFileForVault(filePath string) ([32]byte, []byte, error) {
-	// Open source file
+// StreamingFileProcessor handles streaming file processing with hash calculation and compression
+type StreamingFileProcessor struct {
+	hash           [32]byte
+	compressedSize int64
+	err            error
+	done           chan struct{}
+	reader         *io.PipeReader
+}
+
+// processFileForVaultStreaming creates a true streaming processor for file data
+func processFileForVaultStreaming(filePath string) (*StreamingFileProcessor, error) {
+	processor := &StreamingFileProcessor{
+		done: make(chan struct{}),
+	}
+
+	// Create pipe for streaming compressed data
+	reader, writer := io.Pipe()
+	processor.reader = reader
+
+	// Start processing in goroutine
+	go func() {
+		defer close(processor.done)
+		defer writer.Close()
+
+		// Open source file
+		file, err := os.Open(filePath)
+		if err != nil {
+			processor.err = fmt.Errorf("file open error: %w", err)
+			writer.CloseWithError(processor.err)
+			return
+		}
+		defer file.Close()
+
+		// Create SHA-256 hasher for streaming hash calculation
+		hasher := sha256.New()
+
+		// Create gzip writer for streaming compression
+		gzipWriter := gzip.NewWriter(writer)
+		defer gzipWriter.Close()
+
+		// Create multi-writer to simultaneously hash and compress data
+		multiWriter := io.MultiWriter(hasher, gzipWriter)
+
+		// Stream file data through both hasher and compressor
+		buffer := make([]byte, StreamBufferSize)
+		written, err := io.CopyBuffer(multiWriter, file, buffer)
+		if err != nil {
+			processor.err = fmt.Errorf("streaming processing error: %w", err)
+			writer.CloseWithError(processor.err)
+			return
+		}
+
+		// Close gzip writer to finalize compression
+		if err := gzipWriter.Close(); err != nil {
+			processor.err = fmt.Errorf("compression finalization error: %w", err)
+			writer.CloseWithError(processor.err)
+			return
+		}
+
+		// Get final hash
+		copy(processor.hash[:], hasher.Sum(nil))
+		processor.compressedSize = written // This will be updated by counting actual compressed bytes
+	}()
+
+	return processor, nil
+}
+
+// Read implements io.Reader for streaming compressed data
+func (p *StreamingFileProcessor) Read(buf []byte) (int, error) {
+	return p.reader.Read(buf)
+}
+
+// Wait waits for processing to complete and returns hash and any error
+func (p *StreamingFileProcessor) Wait() ([32]byte, error) {
+	<-p.done
+	return p.hash, p.err
+}
+
+// Close closes the processor and cleans up resources
+func (p *StreamingFileProcessor) Close() error {
+	return p.reader.Close()
+}
+
+// calculateFileMetadata efficiently calculates file hash and compressed size using streaming
+func calculateFileMetadata(filePath string) ([32]byte, int64, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
-		return [32]byte{}, nil, fmt.Errorf("file open error: %w", err)
+		return [32]byte{}, 0, fmt.Errorf("file open error: %w", err)
 	}
 	defer file.Close()
 
-	// Read entire file and calculate hash
-	fileData, err := io.ReadAll(file)
-	if err != nil {
-		return [32]byte{}, nil, fmt.Errorf("file read error: %w", err)
+	// Create hasher and compression size counter
+	hasher := sha256.New()
+
+	// Use a buffer to count compressed size efficiently
+	var compressedSize int64
+	compressedCounter := &countingWriter{count: &compressedSize}
+
+	// Create gzip writer for size calculation
+	gzipWriter := gzip.NewWriter(compressedCounter)
+	defer gzipWriter.Close()
+
+	// Create multi-writer to simultaneously hash and count compressed size
+	multiWriter := io.MultiWriter(hasher, gzipWriter)
+
+	// Stream through data
+	buffer := make([]byte, StreamBufferSize)
+	if _, err := io.CopyBuffer(multiWriter, file, buffer); err != nil {
+		return [32]byte{}, 0, fmt.Errorf("metadata calculation error: %w", err)
 	}
 
-	// Calculate SHA-256 hash
-	hash := sha256.Sum256(fileData)
-
-	// Compress file data
-	compressedData, err := compressData(fileData)
-	if err != nil {
-		return [32]byte{}, nil, fmt.Errorf("compression error: %w", err)
+	// Close gzip writer to get final compressed size
+	if err := gzipWriter.Close(); err != nil {
+		return [32]byte{}, 0, fmt.Errorf("compression finalization error: %w", err)
 	}
 
-	return hash, compressedData, nil
+	// Get final hash
+	var hash [32]byte
+	copy(hash[:], hasher.Sum(nil))
+
+	return hash, compressedSize, nil
+}
+
+// countingWriter counts bytes written to it
+type countingWriter struct {
+	count *int64
+}
+
+func (c *countingWriter) Write(p []byte) (int, error) {
+	n := len(p)
+	*c.count += int64(n)
+	return n, nil
+}
+
+// addFileToVaultStreaming adds file to vault using true streaming approach
+func addFileToVaultStreaming(vaultPath, password string, vaultDir VaultDirectory, filePath string) error {
+	// Create temporary file for the new vault
+	tempPath := vaultPath + ".tmp"
+	defer os.Remove(tempPath) // Clean up temp file
+
+	// Open original vault file for reading
+	originalFile, err := os.Open(vaultPath)
+	if err != nil {
+		return fmt.Errorf("original file open error: %w", err)
+	}
+	defer originalFile.Close()
+
+	// Read original header
+	var originalHeader VaultHeader
+	if err := binary.Read(originalFile, binary.LittleEndian, &originalHeader); err != nil {
+		return fmt.Errorf("header read error: %w", err)
+	}
+
+	// Calculate file offsets for all entries in the directory
+	var totalDataSize int64 = 0
+	for i := range vaultDir.Entries {
+		if !vaultDir.Entries[i].IsDir {
+			vaultDir.Entries[i].Offset = totalDataSize
+			totalDataSize += vaultDir.Entries[i].CompressedSize
+		}
+	}
+
+	// Serialize and compress new directory
+	jsonData, err := json.Marshal(vaultDir)
+	if err != nil {
+		return fmt.Errorf("directory serialization error: %w", err)
+	}
+
+	compressedDir, err := compressData(jsonData)
+	if err != nil {
+		return fmt.Errorf("directory compression error: %w", err)
+	}
+
+	// Encrypt directory with existing parameters
+	key := pbkdf2.Key([]byte(password), originalHeader.Salt[:], int(originalHeader.Iterations), KeyLength, sha256.New)
+
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return fmt.Errorf("AES cipher creation error: %w", err)
+	}
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return fmt.Errorf("GCM creation error: %w", err)
+	}
+
+	encryptedDir := gcm.Seal(nil, originalHeader.Nonce[:], compressedDir, nil)
+
+	// Create new header with updated directory size
+	newHeader := originalHeader
+	newHeader.DirectorySize = uint64(len(encryptedDir))
+
+	// Create temporary file
+	tempFile, err := os.Create(tempPath)
+	if err != nil {
+		return fmt.Errorf("temp file creation error: %w", err)
+	}
+	defer tempFile.Close()
+
+	// Write new header
+	if err := binary.Write(tempFile, binary.LittleEndian, newHeader); err != nil {
+		return fmt.Errorf("header write error: %w", err)
+	}
+
+	// Write encrypted directory
+	if _, err := tempFile.Write(encryptedDir); err != nil {
+		return fmt.Errorf("directory write error: %w", err)
+	}
+
+	// Stream existing file data from original vault
+	headerSize := int64(binary.Size(VaultHeader{}))
+	originalDirectorySize := int64(originalHeader.DirectorySize)
+	fileDataOffset := headerSize + originalDirectorySize
+
+	if _, err := originalFile.Seek(fileDataOffset, io.SeekStart); err != nil {
+		return fmt.Errorf("original file seek error: %w", err)
+	}
+
+	buffer := make([]byte, StreamBufferSize)
+	if _, err := io.CopyBuffer(tempFile, originalFile, buffer); err != nil {
+		return fmt.Errorf("existing file data copy error: %w", err)
+	}
+
+	// Now stream new file data directly from source file with compression
+	sourceFile, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("source file open error: %w", err)
+	}
+	defer sourceFile.Close()
+
+	// Create gzip writer to compress directly to vault
+	gzipWriter := gzip.NewWriter(tempFile)
+	if _, err := io.CopyBuffer(gzipWriter, sourceFile, buffer); err != nil {
+		gzipWriter.Close()
+		return fmt.Errorf("file compression streaming error: %w", err)
+	}
+
+	if err := gzipWriter.Close(); err != nil {
+		return fmt.Errorf("compression finalization error: %w", err)
+	}
+
+	if err := tempFile.Sync(); err != nil {
+		return fmt.Errorf("temp file sync error: %w", err)
+	}
+
+	tempFile.Close()
+	originalFile.Close()
+
+	// Replace original file with temporary file
+	if err := os.Rename(tempPath, vaultPath); err != nil {
+		return fmt.Errorf("file replacement error: %w", err)
+	}
+
+	// Clear sensitive data
+	for i := range key {
+		key[i] = 0
+	}
+
+	return nil
 }
 
 // updateVaultDirectory updates the vault directory in the vault file
@@ -436,6 +671,120 @@ func updateVaultDirectory(vaultPath, password string, vaultDir VaultDirectory) e
 	// Write preserved file data
 	if _, err := file.Write(fileData); err != nil {
 		return fmt.Errorf("file data write error: %w", err)
+	}
+
+	// Clear sensitive data
+	for i := range key {
+		key[i] = 0
+	}
+
+	return nil
+}
+
+// updateVaultDirectoryWithFileDataStreaming updates the vault directory and appends new file data using streaming
+func updateVaultDirectoryWithFileDataStreaming(vaultPath, password string, vaultDir VaultDirectory, newFileDataReader io.Reader) error {
+	// Create temporary file for the new vault
+	tempPath := vaultPath + ".tmp"
+	defer os.Remove(tempPath) // Clean up temp file
+
+	// Open original vault file for reading
+	originalFile, err := os.Open(vaultPath)
+	if err != nil {
+		return fmt.Errorf("original file open error: %w", err)
+	}
+	defer originalFile.Close()
+
+	// Read original header
+	var originalHeader VaultHeader
+	if err := binary.Read(originalFile, binary.LittleEndian, &originalHeader); err != nil {
+		return fmt.Errorf("header read error: %w", err)
+	}
+
+	// Calculate file offsets for all entries in the directory
+	var totalDataSize int64 = 0
+	for i := range vaultDir.Entries {
+		if !vaultDir.Entries[i].IsDir {
+			vaultDir.Entries[i].Offset = totalDataSize
+			totalDataSize += vaultDir.Entries[i].CompressedSize
+		}
+	}
+
+	// Serialize and compress new directory
+	jsonData, err := json.Marshal(vaultDir)
+	if err != nil {
+		return fmt.Errorf("directory serialization error: %w", err)
+	}
+
+	compressedDir, err := compressData(jsonData)
+	if err != nil {
+		return fmt.Errorf("directory compression error: %w", err)
+	}
+
+	// Encrypt directory with existing parameters
+	key := pbkdf2.Key([]byte(password), originalHeader.Salt[:], int(originalHeader.Iterations), KeyLength, sha256.New)
+
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return fmt.Errorf("AES cipher creation error: %w", err)
+	}
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return fmt.Errorf("GCM creation error: %w", err)
+	}
+
+	encryptedDir := gcm.Seal(nil, originalHeader.Nonce[:], compressedDir, nil)
+
+	// Create new header with updated directory size
+	newHeader := originalHeader
+	newHeader.DirectorySize = uint64(len(encryptedDir))
+
+	// Create temporary file
+	tempFile, err := os.Create(tempPath)
+	if err != nil {
+		return fmt.Errorf("temp file creation error: %w", err)
+	}
+	defer tempFile.Close()
+
+	// Write new header
+	if err := binary.Write(tempFile, binary.LittleEndian, newHeader); err != nil {
+		return fmt.Errorf("header write error: %w", err)
+	}
+
+	// Write encrypted directory
+	if _, err := tempFile.Write(encryptedDir); err != nil {
+		return fmt.Errorf("directory write error: %w", err)
+	}
+
+	// Stream existing file data from original vault using original directory size
+	headerSize := int64(binary.Size(VaultHeader{}))
+	originalDirectorySize := int64(originalHeader.DirectorySize)
+	fileDataOffset := headerSize + originalDirectorySize
+
+	if _, err := originalFile.Seek(fileDataOffset, io.SeekStart); err != nil {
+		return fmt.Errorf("original file seek error: %w", err)
+	}
+
+	buffer := make([]byte, StreamBufferSize)
+	if _, err := io.CopyBuffer(tempFile, originalFile, buffer); err != nil {
+		return fmt.Errorf("existing file data copy error: %w", err)
+	}
+
+	// Stream new file data
+	if _, err := io.CopyBuffer(tempFile, newFileDataReader, buffer); err != nil {
+		return fmt.Errorf("new file data copy error: %w", err)
+	}
+
+	if err := tempFile.Sync(); err != nil {
+		return fmt.Errorf("temp file sync error: %w", err)
+	}
+
+	tempFile.Close()
+	originalFile.Close()
+
+	// Replace original file with temporary file
+	if err := os.Rename(tempPath, vaultPath); err != nil {
+		return fmt.Errorf("file replacement error: %w", err)
 	}
 
 	// Clear sensitive data
