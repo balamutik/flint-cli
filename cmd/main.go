@@ -24,6 +24,7 @@
 //   - Streaming I/O operations for memory efficiency
 //   - Gzip compression to reduce vault size
 //   - Metadata-only operations for instant listing
+//   - Parallel processing for multiple files
 //
 // Usage:
 //
@@ -38,6 +39,7 @@
 //	get     - Extract specific file or directory
 //	remove  - Remove file or directory from vault
 //	info    - Show vault file information
+//	version - Show version information
 //
 // For detailed usage information, run:
 //
@@ -45,10 +47,41 @@
 //	flint-vault <command> --help
 package main
 
-import "flint-vault/pkg/commands"
+import (
+	"fmt"
+	"os"
+	"runtime"
+
+	"flint-vault/pkg/commands"
+)
+
+// Version information (set via ldflags during build)
+var (
+	Version   = "dev"     // Version number
+	GitCommit = "unknown" // Git commit hash
+	BuildTime = "unknown" // Build timestamp
+)
 
 // main is the entry point of the Flint Vault application.
-// It delegates to the commands package which handles CLI parsing and execution.
+// It handles version display and delegates to the commands package for CLI parsing.
 func main() {
+	// Check if version is requested
+	if len(os.Args) > 1 && (os.Args[1] == "version" || os.Args[1] == "--version" || os.Args[1] == "-v") {
+		showVersion()
+		return
+	}
+
+	// Delegate to commands package
 	commands.Run()
+}
+
+// showVersion displays detailed version and build information
+func showVersion() {
+	fmt.Printf("Flint Vault %s\n", Version)
+	fmt.Printf("Git Commit: %s\n", GitCommit)
+	fmt.Printf("Build Time: %s\n", BuildTime)
+	fmt.Printf("Go Version: %s\n", runtime.Version())
+	fmt.Printf("Platform: %s/%s\n", runtime.GOOS, runtime.GOARCH)
+	fmt.Printf("\nSecure encrypted file storage with military-grade AES-256-GCM encryption.\n")
+	fmt.Printf("For usage information, run: flint-vault --help\n")
 }

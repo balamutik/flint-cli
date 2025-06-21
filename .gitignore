@@ -205,3 +205,91 @@ docker-compose.override.yml
 
 .mdc
 .cursor
+
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+
+# Go workspace file
+go.work
+
+# General
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment
+.env
+.env.local
+.env.production
+
+# Testing
+.coverage/
+coverage.html
+coverage.out
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+temp/
+tmp/
+*.tmp
+
+# Editor backup files
+*.bak
+*.backup
+
+# OS generated files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Archive files (except necessary ones)
+*.zip
+*.tar.gz
+*.tar.bz2
+*.rar
+*.7z
+
+# Vault test files
+*.vault
+*.flint
+test_*.bin
+test_data/
+
+# Performance test files
+test_large_*
+test_800mb.bin
+extracted/
+
+# Dependencies
+vendor/
+
+# IDE specific
+.vscode/
+.idea/
+*.iml
+
+# Build artifacts
+build/
+dist/
+releases/
+
+# Local development files
+flint-vault
+flint-vault-*
+!flint-vault-cli/
