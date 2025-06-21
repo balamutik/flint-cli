@@ -3,14 +3,13 @@
 //
 // Available commands:
 //   - create: Create new encrypted vault
-//   - add: Add files or directories to vault
+//   - add: Add files or directories to vault (with parallel processing)
 //   - list: Show vault contents
-//   - extract: Extract all files from vault
-//   - get: Extract specific files or directories
+//   - extract: Extract files from vault (with parallel processing)
 //   - remove: Remove files or directories from vault
 //   - info: Show vault file information without password
 //
-// All commands support secure password input and provide comprehensive error handling.
+// All commands use optimized parallel processing and provide comprehensive error handling.
 package commands
 
 import (
@@ -39,7 +38,7 @@ import (
 func Run() {
 	app := &cli.Command{
 		Name:  "flint-vault",
-		Usage: "Secure storage with AES-256 encryption",
+		Usage: "Military-grade encrypted file storage with AES-256",
 		Commands: []*cli.Command{
 			{
 				Name:  "create",
@@ -54,7 +53,7 @@ func Run() {
 					&cli.StringFlag{
 						Name:     "password",
 						Aliases:  []string{"p"},
-						Usage:    "Encryption password (NOT RECOMMENDED, better to enter interactively for security)",
+						Usage:    "Encryption password (NOT RECOMMENDED, better to enter interactively)",
 						Required: false,
 					},
 				},
@@ -62,7 +61,6 @@ func Run() {
 					file := cmd.String("file")
 					password := cmd.String("password")
 
-					// If password not specified, request it securely
 					if password == "" {
 						var err error
 						password, err = vault.ReadPasswordSecurely("Enter password for new vault: ")
@@ -87,7 +85,7 @@ func Run() {
 			},
 			{
 				Name:  "add",
-				Usage: "Add file or directory to vault",
+				Usage: "Add files or directories to vault (optimized with parallel processing)",
 				Flags: []cli.Flag{
 					&cli.StringFlag{
 						Name:     "vault",
@@ -98,7 +96,7 @@ func Run() {
 					&cli.StringFlag{
 						Name:     "password",
 						Aliases:  []string{"p"},
-						Usage:    "Vault password (NOT RECOMMENDED, better to enter interactively for security)",
+						Usage:    "Vault password (NOT RECOMMENDED, better to enter interactively)",
 						Required: false,
 					},
 					&cli.StringFlag{
@@ -107,11 +105,24 @@ func Run() {
 						Usage:    "Path to file or directory to add",
 						Required: true,
 					},
+					&cli.IntFlag{
+						Name:    "workers",
+						Aliases: []string{"w"},
+						Usage:   "Number of parallel workers (0 = auto-detect)",
+						Value:   0,
+					},
+					&cli.BoolFlag{
+						Name:  "progress",
+						Usage: "Show progress information",
+						Value: true,
+					},
 				},
 				Action: func(ctx context.Context, cmd *cli.Command) error {
 					vaultPath := cmd.String("vault")
 					password := cmd.String("password")
 					sourcePath := cmd.String("source")
+					workers := cmd.Int("workers")
+					showProgress := cmd.Bool("progress")
 
 					if password == "" {
 						var err error
@@ -124,25 +135,46 @@ func Run() {
 					// Check that source exists
 					info, err := os.Stat(sourcePath)
 					if err != nil {
-						return fmt.Errorf("file or directory not found: %s", sourcePath)
+						return fmt.Errorf("source not found: %s", sourcePath)
 					}
 
-					fmt.Printf("Adding %s to vault...\n", sourcePath)
+					// Configure parallel processing
+					config := vault.DefaultParallelConfig()
+					if workers > 0 {
+						config.MaxConcurrency = workers
+					}
+
+					var progressChan chan string
+					if showProgress {
+						progressChan = make(chan string, 100)
+						config.ProgressChan = progressChan
+
+						go func() {
+							for msg := range progressChan {
+								fmt.Printf("🔄 %s\n", msg)
+							}
+						}()
+					}
 
 					if info.IsDir() {
-						err = vault.AddDirectoryToVault(vaultPath, password, sourcePath)
-					} else {
-						err = vault.AddFileToVault(vaultPath, password, sourcePath)
-					}
+						fmt.Printf("Adding directory '%s' to vault (workers: %d)...\n", sourcePath, config.MaxConcurrency)
+						stats, err := vault.AddDirectoryToVaultParallel(vaultPath, password, sourcePath, config)
 
-					if err != nil {
-						return fmt.Errorf("add error: %w", err)
-					}
+						if showProgress {
+							close(progressChan)
+						}
 
-					if info.IsDir() {
-						fmt.Printf("✅ Directory '%s' successfully added to vault!\n", sourcePath)
+						if err != nil {
+							return fmt.Errorf("directory add error: %w", err)
+						}
+
+						vault.PrintParallelStats(stats)
 					} else {
-						fmt.Printf("✅ File '%s' successfully added to vault!\n", sourcePath)
+						fmt.Printf("Adding file '%s' to vault...\n", sourcePath)
+						if err := vault.AddFileToVault(vaultPath, password, sourcePath); err != nil {
+							return fmt.Errorf("file add error: %w", err)
+						}
+						fmt.Printf("✅ File successfully added to vault!\n")
 					}
 
 					return nil
@@ -161,7 +193,7 @@ func Run() {
 					&cli.StringFlag{
 						Name:     "password",
 						Aliases:  []string{"p"},
-						Usage:    "Vault password (NOT RECOMMENDED, better to enter interactively for security)",
+						Usage:    "Vault password (NOT RECOMMENDED, better to enter interactively)",
 						Required: false,
 					},
 				},
@@ -190,7 +222,6 @@ func Run() {
 						return nil
 					}
 
-					// Display list of files and directories
 					for _, entry := range entries {
 						icon := "📄"
 						if entry.IsDir {
@@ -210,7 +241,7 @@ func Run() {
 			},
 			{
 				Name:  "extract",
-				Usage: "Extract all files from vault",
+				Usage: "Extract files from vault (optimized with parallel processing)",
 				Flags: []cli.Flag{
 					&cli.StringFlag{
 						Name:     "vault",
@@ -221,7 +252,7 @@ func Run() {
 					&cli.StringFlag{
 						Name:     "password",
 						Aliases:  []string{"p"},
-						Usage:    "Vault password (NOT RECOMMENDED, better to enter interactively for security)",
+						Usage:    "Vault password (NOT RECOMMENDED, better to enter interactively)",
 						Required: false,
 					},
 					&cli.StringFlag{
@@ -230,11 +261,30 @@ func Run() {
 						Usage:    "Directory to extract files",
 						Required: true,
 					},
+					&cli.StringSliceFlag{
+						Name:    "files",
+						Aliases: []string{"f"},
+						Usage:   "Specific files to extract (if not specified, extracts all)",
+					},
+					&cli.IntFlag{
+						Name:    "workers",
+						Aliases: []string{"w"},
+						Usage:   "Number of parallel workers (0 = auto-detect)",
+						Value:   0,
+					},
+					&cli.BoolFlag{
+						Name:  "progress",
+						Usage: "Show progress information",
+						Value: true,
+					},
 				},
 				Action: func(ctx context.Context, cmd *cli.Command) error {
 					vaultPath := cmd.String("vault")
 					password := cmd.String("password")
 					outputDir := cmd.String("output")
+					specificFiles := cmd.StringSlice("files")
+					workers := cmd.Int("workers")
+					showProgress := cmd.Bool("progress")
 
 					if password == "" {
 						var err error
@@ -244,74 +294,53 @@ func Run() {
 						}
 					}
 
-					fmt.Printf("Extracting all files to directory: %s\n", outputDir)
-
-					if err := vault.ExtractFromVault(vaultPath, password, outputDir); err != nil {
-						return fmt.Errorf("extraction error: %w", err)
+					// Configure parallel processing
+					config := vault.DefaultParallelConfig()
+					if workers > 0 {
+						config.MaxConcurrency = workers
 					}
 
-					fmt.Printf("✅ All files successfully extracted to '%s'!\n", outputDir)
+					var progressChan chan string
+					if showProgress {
+						progressChan = make(chan string, 100)
+						config.ProgressChan = progressChan
 
-					return nil
-				},
-			},
-			{
-				Name:  "get",
-				Usage: "Extract specific file or directory from vault",
-				Flags: []cli.Flag{
-					&cli.StringFlag{
-						Name:     "vault",
-						Aliases:  []string{"v"},
-						Usage:    "Path to vault file",
-						Required: true,
-					},
-					&cli.StringFlag{
-						Name:     "password",
-						Aliases:  []string{"p"},
-						Usage:    "Vault password (NOT RECOMMENDED, better to enter interactively for security)",
-						Required: false,
-					},
-					&cli.StringFlag{
-						Name:     "target",
-						Aliases:  []string{"t"},
-						Usage:    "Path to file or directory in vault to extract",
-						Required: true,
-					},
-					&cli.StringFlag{
-						Name:     "output",
-						Aliases:  []string{"o"},
-						Usage:    "Directory to extract files",
-						Required: true,
-					},
-				},
-				Action: func(ctx context.Context, cmd *cli.Command) error {
-					vaultPath := cmd.String("vault")
-					password := cmd.String("password")
-					targetPath := cmd.String("target")
-					outputDir := cmd.String("output")
+						go func() {
+							for msg := range progressChan {
+								fmt.Printf("🔄 %s\n", msg)
+							}
+						}()
+					}
 
-					if password == "" {
-						var err error
-						password, err = vault.ReadPasswordSecurely("Enter vault password: ")
-						if err != nil {
-							return err
+					if len(specificFiles) > 0 {
+						// Extract specific files in parallel
+						fmt.Printf("Extracting %d specific files (workers: %d)...\n", len(specificFiles), config.MaxConcurrency)
+						stats, err := vault.ExtractMultipleFilesFromVaultParallel(vaultPath, password, outputDir, specificFiles, config)
+
+						if showProgress {
+							close(progressChan)
 						}
+
+						if err != nil {
+							return fmt.Errorf("parallel extraction error: %w", err)
+						}
+
+						vault.PrintParallelStats(stats)
+					} else {
+						// Extract all files using optimized streaming
+						fmt.Printf("Extracting all files to: %s\n", outputDir)
+						if err := vault.ExtractFromVault(vaultPath, password, outputDir); err != nil {
+							return fmt.Errorf("extraction error: %w", err)
+						}
+						fmt.Printf("✅ All files successfully extracted!\n")
 					}
-
-					fmt.Printf("Extracting '%s' to directory: %s\n", targetPath, outputDir)
-
-					if err := vault.GetFromVault(vaultPath, password, outputDir, []string{targetPath}); err != nil {
-						return fmt.Errorf("extraction error: %w", err)
-					}
-
-					fmt.Printf("✅ '%s' successfully extracted to '%s'!\n", targetPath, outputDir)
 
 					return nil
 				},
 			},
 			{
 				Name:  "remove",
-				Usage: "Remove file or directory from vault",
+				Usage: "Remove files or directories from vault",
 				Flags: []cli.Flag{
 					&cli.StringFlag{
 						Name:     "vault",
@@ -322,7 +351,7 @@ func Run() {
 					&cli.StringFlag{
 						Name:     "password",
 						Aliases:  []string{"p"},
-						Usage:    "Vault password (NOT RECOMMENDED, better to enter interactively for security)",
+						Usage:    "Vault password (NOT RECOMMENDED, better to enter interactively)",
 						Required: false,
 					},
 					&cli.StringFlag{
@@ -352,7 +381,6 @@ func Run() {
 					}
 
 					fmt.Printf("✅ '%s' successfully removed from vault!\n", targetPath)
-
 					return nil
 				},
 			},
@@ -372,13 +400,11 @@ func Run() {
 
 					fmt.Printf("🔍 Analyzing file: %s\n\n", filePath)
 
-					// Get basic vault information
 					info, err := vault.GetVaultInfo(filePath)
 					if err != nil {
 						return fmt.Errorf("file analysis error: %w", err)
 					}
 
-					// Display file information
 					fmt.Printf("📁 File Path: %s\n", info.FilePath)
 					fmt.Printf("📏 File Size: %s\n", formatSize(info.FileSize))
 
@@ -387,7 +413,6 @@ func Run() {
 						fmt.Printf("🔢 Format Version: %d\n", info.Version)
 						fmt.Printf("🔐 PBKDF2 Iterations: %s\n", formatNumber(int64(info.Iterations)))
 
-						// Perform additional validation
 						if err := vault.ValidateVaultFile(filePath); err != nil {
 							fmt.Printf("⚠️  Validation: Failed - %v\n", err)
 						} else {
@@ -432,7 +457,6 @@ func formatNumber(num int64) string {
 		return str
 	}
 
-	// Add commas every 3 digits from right to left
 	var result []rune
 	for i, digit := range str {
 		if i > 0 && (len(str)-i)%3 == 0 {

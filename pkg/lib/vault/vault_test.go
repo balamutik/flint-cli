@@ -1,143 +1,316 @@
 package vault
 
 import (
-	"crypto/sha256"
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 // Test constants
 const (
-	testPassword  = "TestPassword123!"
-	testVaultPath = "test_vault.dat"
-	testContent   = "This is test file content for encryption testing"
+	integrationTestPassword = "IntegrationTest123!"
 )
 
-// Helper functions for test setup and cleanup
-func setupTest(t *testing.T) string {
-	tmpDir, err := ioutil.TempDir("", "vault_test_*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	return tmpDir
-}
+// Test variables
+var (
+	largeFileContent = "Large content for performance testing. " + strings.Repeat("Data ", 1000)
+)
 
-func cleanupTest(t *testing.T, dir string) {
-	if err := os.RemoveAll(dir); err != nil {
-		t.Logf("Warning: failed to cleanup test dir %s: %v", dir, err)
-	}
-}
+// ========================
+// INTEGRATION TESTS
+// ========================
 
-func createTestFile(t *testing.T, dir, filename, content string) string {
-	filePath := filepath.Join(dir, filename)
-	if err := ioutil.WriteFile(filePath, []byte(content), 0644); err != nil {
-		t.Fatalf("Failed to create test file: %v", err)
-	}
-	return filePath
-}
+// TestCompleteWorkflow тестирует полный рабочий процесс
+func TestCompleteWorkflow(t *testing.T) {
+	tmpDir := setupCoreTest(t)
+	defer cleanupCoreTest(t, tmpDir)
 
-// TestCreateVault tests basic vault creation
-func TestCreateVault(t *testing.T) {
-	tmpDir := setupTest(t)
-	defer cleanupTest(t, tmpDir)
+	vaultPath := filepath.Join(tmpDir, "integration.vault")
 
-	vaultPath := filepath.Join(tmpDir, testVaultPath)
-
-	// Test successful vault creation
-	err := CreateVault(vaultPath, testPassword)
-	if err != nil {
+	// 1. Создание vault
+	if err := CreateVault(vaultPath, integrationTestPassword); err != nil {
 		t.Fatalf("CreateVault failed: %v", err)
 	}
 
-	// Check that vault file exists
-	if _, err := os.Stat(vaultPath); os.IsNotExist(err) {
-		t.Fatal("Vault file was not created")
-	}
-
-	// Test creating vault with existing file (should fail)
-	err = CreateVault(vaultPath, testPassword)
-	if err == nil {
-		t.Fatal("Expected error when creating vault with existing file")
-	}
-
-	// Test creating vault with empty password (should fail)
-	vaultPath2 := filepath.Join(tmpDir, "vault2.dat")
-	err = CreateVault(vaultPath2, "")
-	if err == nil {
-		t.Fatal("Expected error when creating vault with empty password")
-	}
-}
-
-// TestAddFileToVault tests adding files to vault
-func TestAddFileToVault(t *testing.T) {
-	tmpDir := setupTest(t)
-	defer cleanupTest(t, tmpDir)
-
-	vaultPath := filepath.Join(tmpDir, testVaultPath)
-	testFilePath := createTestFile(t, tmpDir, "test.txt", testContent)
-
-	// Create vault
-	if err := CreateVault(vaultPath, testPassword); err != nil {
-		t.Fatalf("CreateVault failed: %v", err)
-	}
-
-	// Test adding file to vault
-	err := AddFileToVault(vaultPath, testPassword, testFilePath)
-	if err != nil {
-		t.Fatalf("AddFileToVault failed: %v", err)
-	}
-
-	// Verify file was added
-	entries, err := ListVault(vaultPath, testPassword)
+	// 2. Проверка пустого vault
+	entries, err := ListVault(vaultPath, integrationTestPassword)
 	if err != nil {
 		t.Fatalf("ListVault failed: %v", err)
 	}
-
-	if len(entries) != 1 {
-		t.Fatalf("Expected 1 entry in vault, got %d", len(entries))
-	}
-
-	entry := entries[0]
-	if entry.Name != "test.txt" {
-		t.Fatalf("Expected file name 'test.txt', got '%s'", entry.Name)
-	}
-
-	if entry.Size != int64(len(testContent)) {
-		t.Fatalf("Expected file size %d, got %d", len(testContent), entry.Size)
-	}
-}
-
-// TestListVault tests vault listing functionality
-func TestListVault(t *testing.T) {
-	tmpDir := setupTest(t)
-	defer cleanupTest(t, tmpDir)
-
-	vaultPath := filepath.Join(tmpDir, testVaultPath)
-
-	// Create vault
-	if err := CreateVault(vaultPath, testPassword); err != nil {
-		t.Fatalf("CreateVault failed: %v", err)
-	}
-
-	// Test listing empty vault
-	entries, err := ListVault(vaultPath, testPassword)
-	if err != nil {
-		t.Fatalf("ListVault failed: %v", err)
-	}
-
 	if len(entries) != 0 {
 		t.Fatalf("Expected empty vault, got %d entries", len(entries))
 	}
 
-	// Add a file and test listing
-	testFilePath := createTestFile(t, tmpDir, "test.txt", testContent)
-	if err := AddFileToVault(vaultPath, testPassword, testFilePath); err != nil {
+	// 3. Добавление файлов
+	file1 := createTestFile(t, tmpDir, "document.txt", "Important document content")
+	file2 := createTestFile(t, tmpDir, "config.json", `{"setting": "value"}`)
+
+	if err := AddFileToVault(vaultPath, integrationTestPassword, file1); err != nil {
+		t.Fatalf("AddFileToVault failed for file1: %v", err)
+	}
+	if err := AddFileToVault(vaultPath, integrationTestPassword, file2); err != nil {
+		t.Fatalf("AddFileToVault failed for file2: %v", err)
+	}
+
+	// 4. Проверка списка файлов
+	entries, err = ListVault(vaultPath, integrationTestPassword)
+	if err != nil {
+		t.Fatalf("ListVault failed: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("Expected 2 entries, got %d", len(entries))
+	}
+
+	// 5. Селективное извлечение
+	outputDir1 := filepath.Join(tmpDir, "selective_output")
+	if err := GetFromVault(vaultPath, integrationTestPassword, outputDir1, []string{entries[0].Path}); err != nil {
+		t.Fatalf("GetFromVault failed: %v", err)
+	}
+
+	// 6. Полное извлечение
+	outputDir2 := filepath.Join(tmpDir, "full_output")
+	if err := ExtractFromVault(vaultPath, integrationTestPassword, outputDir2); err != nil {
+		t.Fatalf("ExtractFromVault failed: %v", err)
+	}
+
+	// 7. Удаление одного файла
+	if err := RemoveFromVault(vaultPath, integrationTestPassword, []string{entries[0].Path}); err != nil {
+		t.Fatalf("RemoveFromVault failed: %v", err)
+	}
+
+	// 8. Проверка что файл удалён
+	entries, err = ListVault(vaultPath, integrationTestPassword)
+	if err != nil {
+		t.Fatalf("ListVault failed: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("Expected 1 entry after removal, got %d", len(entries))
+	}
+}
+
+// ========================
+// SECURITY TESTS
+// ========================
+
+// TestPasswordSecurity тестирует безопасность паролей
+func TestPasswordSecurity(t *testing.T) {
+	tmpDir := setupCoreTest(t)
+	defer cleanupCoreTest(t, tmpDir)
+
+	vaultPath := filepath.Join(tmpDir, "security.vault")
+	testFile := createTestFile(t, tmpDir, "secret.txt", "Top secret information")
+
+	// Тест 1: Создание с сильным паролем
+	strongPassword := "VeryStrongPassword123!@#$%^&*()"
+	if err := CreateVault(vaultPath, strongPassword); err != nil {
+		t.Fatalf("CreateVault failed with strong password: %v", err)
+	}
+
+	if err := AddFileToVault(vaultPath, strongPassword, testFile); err != nil {
 		t.Fatalf("AddFileToVault failed: %v", err)
 	}
 
-	entries, err = ListVault(vaultPath, testPassword)
+	// Тест 2: Неправильные пароли должны давать ошибку
+	wrongPasswords := []string{
+		"wrongpassword",
+		"VeryStrongPassword123!@#$%^&*(",
+		"VeryStrongPassword123!@#$%^&*()X",
+		"",
+		"verystrongpassword123!@#$%^&*()",
+	}
+
+	for i, wrongPass := range wrongPasswords {
+		_, err := ListVault(vaultPath, wrongPass)
+		if err == nil {
+			t.Errorf("Test %d: Expected error with wrong password '%s'", i+1, wrongPass)
+		}
+	}
+
+	// Тест 3: Правильный пароль должен работать
+	entries, err := ListVault(vaultPath, strongPassword)
+	if err != nil {
+		t.Fatalf("ListVault failed with correct password: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("Expected 1 entry, got %d", len(entries))
+	}
+}
+
+// TestPasswordComplexity тестирует различные типы паролей
+func TestPasswordComplexity(t *testing.T) {
+	tmpDir := setupCoreTest(t)
+	defer cleanupCoreTest(t, tmpDir)
+
+	testPasswords := []struct {
+		name     string
+		password string
+		valid    bool
+	}{
+		{"Empty password", "", false},
+		{"Simple password", "123", true},
+		{"Complex password", "MyVeryComplexPassword!@#123", true},
+		{"Unicode password", "пароль123", true},
+		{"Very long password", strings.Repeat("a", 1000), true},
+		{"Special chars", "!@#$%^&*()_+-={}[]|\\:;\"'<>?,./ ", true},
+	}
+
+	for i, test := range testPasswords {
+		vaultPath := filepath.Join(tmpDir, "vault_"+string(rune('a'+i))+".vault")
+
+		err := CreateVault(vaultPath, test.password)
+
+		if test.valid && err != nil {
+			t.Errorf("Test '%s': Expected success but got error: %v", test.name, err)
+		} else if !test.valid && err == nil {
+			t.Errorf("Test '%s': Expected error but got success", test.name)
+		}
+	}
+}
+
+// ========================
+// PERFORMANCE TESTS
+// ========================
+
+// TestLargeFileHandling тестирует работу с большими файлами
+func TestLargeFileHandling(t *testing.T) {
+	tmpDir := setupCoreTest(t)
+	defer cleanupCoreTest(t, tmpDir)
+
+	vaultPath := filepath.Join(tmpDir, "large.vault")
+
+	// Создаём файл размером ~200KB
+	largeContent := strings.Repeat("Large file content with repetitive data. ", 5000)
+	largeFile := createTestFile(t, tmpDir, "large.txt", largeContent)
+
+	// Создаём vault
+	if err := CreateVault(vaultPath, integrationTestPassword); err != nil {
+		t.Fatalf("CreateVault failed: %v", err)
+	}
+
+	// Измеряем время добавления
+	start := time.Now()
+	if err := AddFileToVault(vaultPath, integrationTestPassword, largeFile); err != nil {
+		t.Fatalf("AddFileToVault failed for large file: %v", err)
+	}
+	addDuration := time.Since(start)
+
+	// Измеряем время извлечения
+	outputDir := filepath.Join(tmpDir, "large_output")
+	start = time.Now()
+	if err := ExtractFromVault(vaultPath, integrationTestPassword, outputDir); err != nil {
+		t.Fatalf("ExtractFromVault failed for large file: %v", err)
+	}
+	extractDuration := time.Since(start)
+
+	// Проверяем целостность
+	entries, err := ListVault(vaultPath, integrationTestPassword)
+	if err != nil {
+		t.Fatalf("ListVault failed: %v", err)
+	}
+
+	extractedPath := filepath.Join(outputDir, entries[0].Path)
+	extractedContent, err := ioutil.ReadFile(extractedPath)
+	if err != nil {
+		t.Fatalf("Failed to read extracted file: %v", err)
+	}
+
+	if string(extractedContent) != largeContent {
+		t.Fatal("Large file content mismatch after extraction")
+	}
+
+	// Проверяем производительность (должно быть разумно быстро)
+	t.Logf("Large file processing times: Add=%v, Extract=%v", addDuration, extractDuration)
+
+	if addDuration > 5*time.Second {
+		t.Logf("Warning: Adding large file took %v (might be slow)", addDuration)
+	}
+	if extractDuration > 5*time.Second {
+		t.Logf("Warning: Extracting large file took %v (might be slow)", extractDuration)
+	}
+}
+
+// ========================
+// EDGE CASE TESTS
+// ========================
+
+// TestSpecialCharacterFiles тестирует файлы со специальными символами
+func TestSpecialCharacterFiles(t *testing.T) {
+	tmpDir := setupCoreTest(t)
+	defer cleanupCoreTest(t, tmpDir)
+
+	vaultPath := filepath.Join(tmpDir, "special.vault")
+
+	if err := CreateVault(vaultPath, integrationTestPassword); err != nil {
+		t.Fatalf("CreateVault failed: %v", err)
+	}
+
+	// Тестируем файлы с различными именами (избегаем символы, которые могут быть проблемными в путях)
+	specialFiles := []struct {
+		name    string
+		content string
+	}{
+		{"file with spaces.txt", "Content with spaces"},
+		{"file_with_underscores.txt", "Content with underscores"},
+		{"file-with-dashes.txt", "Content with dashes"},
+		{"file.multiple.dots.txt", "Content with dots"},
+		{"числа123.txt", "Content with numbers"},
+	}
+
+	for _, file := range specialFiles {
+		filePath := createTestFile(t, tmpDir, file.name, file.content)
+
+		if err := AddFileToVault(vaultPath, integrationTestPassword, filePath); err != nil {
+			t.Errorf("Failed to add file '%s': %v", file.name, err)
+			continue
+		}
+	}
+
+	// Проверяем что все файлы добавлены
+	entries, err := ListVault(vaultPath, integrationTestPassword)
+	if err != nil {
+		t.Fatalf("ListVault failed: %v", err)
+	}
+
+	if len(entries) != len(specialFiles) {
+		t.Fatalf("Expected %d entries, got %d", len(specialFiles), len(entries))
+	}
+
+	// Извлекаем и проверяем содержимое
+	outputDir := filepath.Join(tmpDir, "special_output")
+	if err := ExtractFromVault(vaultPath, integrationTestPassword, outputDir); err != nil {
+		t.Fatalf("ExtractFromVault failed: %v", err)
+	}
+
+	for _, entry := range entries {
+		extractedPath := filepath.Join(outputDir, entry.Path)
+		if _, err := os.Stat(extractedPath); os.IsNotExist(err) {
+			t.Errorf("Extracted file does not exist: %s", extractedPath)
+		}
+	}
+}
+
+// TestEmptyFiles тестирует работу с пустыми файлами
+func TestEmptyFiles(t *testing.T) {
+	tmpDir := setupCoreTest(t)
+	defer cleanupCoreTest(t, tmpDir)
+
+	vaultPath := filepath.Join(tmpDir, "empty.vault")
+	emptyFile := createTestFile(t, tmpDir, "empty.txt", "")
+
+	if err := CreateVault(vaultPath, integrationTestPassword); err != nil {
+		t.Fatalf("CreateVault failed: %v", err)
+	}
+
+	// Добавляем пустой файл
+	if err := AddFileToVault(vaultPath, integrationTestPassword, emptyFile); err != nil {
+		t.Fatalf("AddFileToVault failed for empty file: %v", err)
+	}
+
+	// Проверяем что файл добавлен
+	entries, err := ListVault(vaultPath, integrationTestPassword)
 	if err != nil {
 		t.Fatalf("ListVault failed: %v", err)
 	}
@@ -146,89 +319,63 @@ func TestListVault(t *testing.T) {
 		t.Fatalf("Expected 1 entry, got %d", len(entries))
 	}
 
-	// Test listing with wrong password (should fail)
-	_, err = ListVault(vaultPath, "wrongpassword")
-	if err == nil {
-		t.Fatal("Expected error when listing with wrong password")
-	}
-}
-
-// TestExtractFromVault tests extraction functionality
-func TestExtractFromVault(t *testing.T) {
-	tmpDir := setupTest(t)
-	defer cleanupTest(t, tmpDir)
-
-	vaultPath := filepath.Join(tmpDir, testVaultPath)
-	outputDir := filepath.Join(tmpDir, "output")
-
-	// Create vault and add test file
-	if err := CreateVault(vaultPath, testPassword); err != nil {
-		t.Fatalf("CreateVault failed: %v", err)
+	if entries[0].Size != 0 {
+		t.Errorf("Expected size 0 for empty file, got %d", entries[0].Size)
 	}
 
-	testFilePath := createTestFile(t, tmpDir, "test.txt", testContent)
-	if err := AddFileToVault(vaultPath, testPassword, testFilePath); err != nil {
-		t.Fatalf("AddFileToVault failed: %v", err)
-	}
-
-	// Test extracting from vault
-	err := ExtractFromVault(vaultPath, testPassword, outputDir)
-	if err != nil {
+	// Извлекаем и проверяем
+	outputDir := filepath.Join(tmpDir, "empty_output")
+	if err := ExtractFromVault(vaultPath, integrationTestPassword, outputDir); err != nil {
 		t.Fatalf("ExtractFromVault failed: %v", err)
 	}
 
-	// List files to debug
-	entries, err := ListVault(vaultPath, testPassword)
-	if err != nil {
-		t.Fatalf("ListVault failed: %v", err)
-	}
-
-	if len(entries) == 0 {
-		t.Fatal("No entries in vault")
-	}
-
-	// Verify extracted file exists and has correct content
-	// The file should be extracted with the same path as stored
 	extractedPath := filepath.Join(outputDir, entries[0].Path)
-	if _, err := os.Stat(extractedPath); os.IsNotExist(err) {
-		t.Fatalf("Extracted file does not exist at %s", extractedPath)
-	}
-
 	content, err := ioutil.ReadFile(extractedPath)
 	if err != nil {
-		t.Fatalf("Failed to read extracted file: %v", err)
+		t.Fatalf("Failed to read extracted empty file: %v", err)
 	}
 
-	if string(content) != testContent {
-		t.Fatalf("Content mismatch. Expected: '%s', got: '%s'", testContent, string(content))
+	if len(content) != 0 {
+		t.Errorf("Expected empty content, got %d bytes", len(content))
 	}
 }
 
-// TestGetFromVault tests selective extraction
-func TestGetFromVault(t *testing.T) {
-	tmpDir := setupTest(t)
-	defer cleanupTest(t, tmpDir)
+// ========================
+// COMPRESSION TESTS
+// ========================
 
-	vaultPath := filepath.Join(tmpDir, testVaultPath)
-	outputDir := filepath.Join(tmpDir, "output")
+// TestCompressionEfficiency тестирует эффективность сжатия
+func TestCompressionEfficiency(t *testing.T) {
+	tmpDir := setupCoreTest(t)
+	defer cleanupCoreTest(t, tmpDir)
 
-	// Create vault and add multiple files
-	if err := CreateVault(vaultPath, testPassword); err != nil {
+	vaultPath := filepath.Join(tmpDir, "compression.vault")
+
+	if err := CreateVault(vaultPath, integrationTestPassword); err != nil {
 		t.Fatalf("CreateVault failed: %v", err)
 	}
 
-	file1 := createTestFile(t, tmpDir, "file1.txt", "Content 1")
-	file2 := createTestFile(t, tmpDir, "file2.txt", "Content 2")
+	// Тест 1: Хорошо сжимаемые данные
+	compressibleContent := strings.Repeat("AAAAAAAAAA", 1000) // 10KB повторяющихся данных
+	compressibleFile := createTestFile(t, tmpDir, "compressible.txt", compressibleContent)
 
-	if err := AddFileToVault(vaultPath, testPassword, file1); err != nil {
-		t.Fatalf("AddFileToVault failed: %v", err)
-	}
-	if err := AddFileToVault(vaultPath, testPassword, file2); err != nil {
+	if err := AddFileToVault(vaultPath, integrationTestPassword, compressibleFile); err != nil {
 		t.Fatalf("AddFileToVault failed: %v", err)
 	}
 
-	// List files to see what paths are stored
-	entries, err := ListVault(vaultPath, testPassword)
+	// Тест 2: Плохо сжимаемые данные (псевдо-случайные)
+	randomContent := ""
+	for i := 0; i < 1000; i++ {
+		randomContent += string(rune(33 + (i*7)%94)) // Псевдо-случайные ASCII символы
+	}
+	randomFile := createTestFile(t, tmpDir, "random.txt", randomContent)
+
+	if err := AddFileToVault(vaultPath, integrationTestPassword, randomFile); err != nil {
+		t.Fatalf("AddFileToVault failed: %v", err)
+	}
+
+	// Проверяем результаты сжатия
+	entries, err := ListVault(vaultPath, integrationTestPassword)
 	if err != nil {
 		t.Fatalf("ListVault failed: %v", err)
 	}
@@ -237,298 +384,115 @@ func TestGetFromVault(t *testing.T) {
 		t.Fatalf("Expected 2 entries, got %d", len(entries))
 	}
 
-	// Find the path for file1.txt in the vault
-	var file1Path string
 	for _, entry := range entries {
-		if entry.Name == "file1.txt" {
-			file1Path = entry.Path
-			break
+		compressionRatio := float64(entry.CompressedSize) / float64(entry.Size)
+		t.Logf("File %s: Original=%d, Compressed=%d, Ratio=%.2f",
+			entry.Name, entry.Size, entry.CompressedSize, compressionRatio)
+
+		if entry.Name == "compressible.txt" && compressionRatio > 0.1 {
+			t.Logf("Warning: Highly compressible data has ratio %.2f (expected < 0.1)", compressionRatio)
+		}
+	}
+}
+
+// ========================
+// STRESS TESTS
+// ========================
+
+// TestManySmallFiles тестирует много маленьких файлов
+func TestManySmallFiles(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping stress test in short mode")
+	}
+
+	tmpDir := setupCoreTest(t)
+	defer cleanupCoreTest(t, tmpDir)
+
+	vaultPath := filepath.Join(tmpDir, "many_files.vault")
+
+	if err := CreateVault(vaultPath, integrationTestPassword); err != nil {
+		t.Fatalf("CreateVault failed: %v", err)
+	}
+
+	// Создаём много маленьких файлов
+	fileCount := 50
+	for i := 0; i < fileCount; i++ {
+		fileName := filepath.Join("file_" + string(rune('0'+i%10)) + string(rune('0'+(i/10)%10)) + ".txt")
+		content := "Small file content " + string(rune('0'+i%10))
+		filePath := createTestFile(t, tmpDir, fileName, content)
+
+		if err := AddFileToVault(vaultPath, integrationTestPassword, filePath); err != nil {
+			t.Fatalf("AddFileToVault failed for file %d: %v", i, err)
 		}
 	}
 
-	if file1Path == "" {
-		t.Fatal("file1.txt not found in vault")
-	}
-
-	// Test selective extraction using the stored path
-	err = GetFromVault(vaultPath, testPassword, outputDir, []string{file1Path})
-	if err != nil {
-		t.Fatalf("GetFromVault failed: %v", err)
-	}
-
-	// Verify only file1.txt was extracted
-	extractedPath1 := filepath.Join(outputDir, file1Path)
-	extractedPath2 := filepath.Join(outputDir, entries[1].Path)
-
-	if _, err := os.Stat(extractedPath1); os.IsNotExist(err) {
-		t.Fatal("Expected file1.txt to be extracted")
-	}
-
-	if _, err := os.Stat(extractedPath2); err == nil {
-		t.Fatal("Expected file2.txt to NOT be extracted")
-	}
-}
-
-// TestRemoveFromVault tests file removal
-func TestRemoveFromVault(t *testing.T) {
-	tmpDir := setupTest(t)
-	defer cleanupTest(t, tmpDir)
-
-	vaultPath := filepath.Join(tmpDir, testVaultPath)
-
-	// Create vault and add test files
-	if err := CreateVault(vaultPath, testPassword); err != nil {
-		t.Fatalf("CreateVault failed: %v", err)
-	}
-
-	file1 := createTestFile(t, tmpDir, "file1.txt", "Content 1")
-	file2 := createTestFile(t, tmpDir, "file2.txt", "Content 2")
-
-	if err := AddFileToVault(vaultPath, testPassword, file1); err != nil {
-		t.Fatalf("AddFileToVault failed: %v", err)
-	}
-	if err := AddFileToVault(vaultPath, testPassword, file2); err != nil {
-		t.Fatalf("AddFileToVault failed: %v", err)
-	}
-
-	// List files before removal to get correct paths
-	entries, err := ListVault(vaultPath, testPassword)
+	// Проверяем что все файлы добавлены
+	entries, err := ListVault(vaultPath, integrationTestPassword)
 	if err != nil {
 		t.Fatalf("ListVault failed: %v", err)
 	}
 
-	if len(entries) != 2 {
-		t.Fatalf("Expected 2 entries before removal, got %d", len(entries))
+	if len(entries) != fileCount {
+		t.Fatalf("Expected %d entries, got %d", fileCount, len(entries))
 	}
 
-	// Find the path for file1.txt
-	var file1Path string
+	// Извлекаем все файлы
+	outputDir := filepath.Join(tmpDir, "many_output")
+	if err := ExtractFromVault(vaultPath, integrationTestPassword, outputDir); err != nil {
+		t.Fatalf("ExtractFromVault failed: %v", err)
+	}
+
+	// Проверяем что все файлы извлечены
 	for _, entry := range entries {
-		if entry.Name == "file1.txt" {
-			file1Path = entry.Path
-			break
+		extractedPath := filepath.Join(outputDir, entry.Path)
+		if _, err := os.Stat(extractedPath); os.IsNotExist(err) {
+			t.Errorf("File not extracted: %s", extractedPath)
 		}
 	}
-
-	if file1Path == "" {
-		t.Fatal("file1.txt not found in vault")
-	}
-
-	// Test removing file from vault using the stored path
-	err = RemoveFromVault(vaultPath, testPassword, []string{file1Path})
-	if err != nil {
-		t.Fatalf("RemoveFromVault failed: %v", err)
-	}
-
-	// Verify file was removed
-	entries, err = ListVault(vaultPath, testPassword)
-	if err != nil {
-		t.Fatalf("ListVault failed: %v", err)
-	}
-	if len(entries) != 1 {
-		t.Fatalf("Expected 1 entry after removal, got %d", len(entries))
-	}
-
-	if entries[0].Name != "file2.txt" {
-		t.Fatalf("Expected remaining file to be 'file2.txt', got '%s'", entries[0].Name)
-	}
 }
 
-// TestVaultIntegrity tests SHA-256 integrity verification
-func TestVaultIntegrity(t *testing.T) {
-	tmpDir := setupTest(t)
-	defer cleanupTest(t, tmpDir)
+// ========================
+// BENCHMARKS
+// ========================
 
-	vaultPath := filepath.Join(tmpDir, testVaultPath)
-
-	// Create vault and add test file
-	if err := CreateVault(vaultPath, testPassword); err != nil {
-		t.Fatalf("CreateVault failed: %v", err)
-	}
-
-	testFilePath := createTestFile(t, tmpDir, "test.txt", testContent)
-	if err := AddFileToVault(vaultPath, testPassword, testFilePath); err != nil {
-		t.Fatalf("AddFileToVault failed: %v", err)
-	}
-
-	// Get file entry to check hash
-	entries, err := ListVault(vaultPath, testPassword)
-	if err != nil {
-		t.Fatalf("ListVault failed: %v", err)
-	}
-
-	if len(entries) != 1 {
-		t.Fatalf("Expected 1 entry, got %d", len(entries))
-	}
-
-	entry := entries[0]
-	expectedHash := sha256.Sum256([]byte(testContent))
-
-	if entry.SHA256Hash != expectedHash {
-		t.Fatalf("Hash mismatch. Expected: %x, got: %x", expectedHash, entry.SHA256Hash)
-	}
-}
-
-// TestVaultCompression tests compression functionality
-func TestVaultCompression(t *testing.T) {
-	tmpDir := setupTest(t)
-	defer cleanupTest(t, tmpDir)
-
-	vaultPath := filepath.Join(tmpDir, testVaultPath)
-
-	// Create vault
-	if err := CreateVault(vaultPath, testPassword); err != nil {
-		t.Fatalf("CreateVault failed: %v", err)
-	}
-
-	// Create a highly compressible file (repeated content)
-	compressibleContent := ""
-	for i := 0; i < 1000; i++ {
-		compressibleContent += "This is repeated content that should compress well. "
-	}
-
-	testFilePath := createTestFile(t, tmpDir, "compressible.txt", compressibleContent)
-	if err := AddFileToVault(vaultPath, testPassword, testFilePath); err != nil {
-		t.Fatalf("AddFileToVault failed: %v", err)
-	}
-
-	// Check that compressed size is smaller than original size
-	entries, err := ListVault(vaultPath, testPassword)
-	if err != nil {
-		t.Fatalf("ListVault failed: %v", err)
-	}
-
-	if len(entries) != 1 {
-		t.Fatalf("Expected 1 entry, got %d", len(entries))
-	}
-
-	entry := entries[0]
-	if entry.CompressedSize >= entry.Size {
-		t.Fatalf("Expected compressed size (%d) to be smaller than original size (%d)",
-			entry.CompressedSize, entry.Size)
-	}
-
-	compressionRatio := float64(entry.CompressedSize) / float64(entry.Size)
-	if compressionRatio > 0.5 {
-		t.Fatalf("Expected compression ratio < 0.5, got %f", compressionRatio)
-	}
-}
-
-// TestPasswordSecurity tests password validation
-func TestPasswordSecurity(t *testing.T) {
-	tmpDir := setupTest(t)
-	defer cleanupTest(t, tmpDir)
-
-	vaultPath := filepath.Join(tmpDir, testVaultPath)
-
-	// Create vault with one password
-	password1 := "Password123!"
-	if err := CreateVault(vaultPath, password1); err != nil {
-		t.Fatalf("CreateVault failed: %v", err)
-	}
-
-	// Test that wrong password fails
-	password2 := "DifferentPassword456!"
-	_, err := ListVault(vaultPath, password2)
-	if err == nil {
-		t.Fatal("Expected error when using wrong password")
-	}
-
-	// Test that correct password works
-	entries, err := ListVault(vaultPath, password1)
-	if err != nil {
-		t.Fatalf("ListVault with correct password failed: %v", err)
-	}
-
-	if len(entries) != 0 {
-		t.Fatalf("Expected empty vault, got %d entries", len(entries))
-	}
-}
-
-// TestDirectoryAddition tests adding directories to vault
-func TestDirectoryAddition(t *testing.T) {
-	tmpDir := setupTest(t)
-	defer cleanupTest(t, tmpDir)
-
-	vaultPath := filepath.Join(tmpDir, testVaultPath)
-
-	// Create test directory structure
-	testDir := filepath.Join(tmpDir, "testdir")
-	if err := os.MkdirAll(testDir, 0755); err != nil {
-		t.Fatalf("Failed to create test directory: %v", err)
-	}
-
-	subDir := filepath.Join(testDir, "subdir")
-	if err := os.MkdirAll(subDir, 0755); err != nil {
-		t.Fatalf("Failed to create subdirectory: %v", err)
-	}
-
-	createTestFile(t, testDir, "file1.txt", "Content 1")
-	createTestFile(t, testDir, "file2.txt", "Content 2")
-	createTestFile(t, subDir, "file3.txt", "Content 3")
-
-	// Create vault
-	if err := CreateVault(vaultPath, testPassword); err != nil {
-		t.Fatalf("CreateVault failed: %v", err)
-	}
-
-	// Test adding directory to vault
-	err := AddDirectoryToVault(vaultPath, testPassword, testDir)
-	if err != nil {
-		t.Fatalf("AddDirectoryToVault failed: %v", err)
-	}
-
-	// Verify directory and files were added
-	entries, err := ListVault(vaultPath, testPassword)
-	if err != nil {
-		t.Fatalf("ListVault failed: %v", err)
-	}
-
-	if len(entries) == 0 {
-		t.Fatal("Expected entries in vault after adding directory")
-	}
-
-	// Count files (should have at least 3 files)
-	var fileCount int
-	for _, entry := range entries {
-		if !entry.IsDir {
-			fileCount++
-		}
-	}
-
-	if fileCount < 3 {
-		t.Fatalf("Expected at least 3 files in vault, got %d", fileCount)
-	}
-}
-
-// Benchmark tests
-func BenchmarkCreateVault(b *testing.B) {
-	tmpDir, _ := ioutil.TempDir("", "vault_bench_*")
+// BenchmarkCompleteWorkflow бенчмарк полного рабочего процесса
+func BenchmarkCompleteWorkflow(b *testing.B) {
+	tmpDir, _ := ioutil.TempDir("", "bench_workflow_*")
 	defer os.RemoveAll(tmpDir)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		vaultPath := filepath.Join(tmpDir, "bench_vault_"+string(rune(i))+".dat")
-		if err := CreateVault(vaultPath, testPassword); err != nil {
-			b.Fatalf("CreateVault failed: %v", err)
-		}
+		vaultPath := filepath.Join(tmpDir, "bench_"+string(rune('a'+i))+".vault")
+		testFile := filepath.Join(tmpDir, "bench_file_"+string(rune('a'+i))+".txt")
+
+		// Создаём тестовый файл
+		ioutil.WriteFile(testFile, []byte(largeFileContent), 0644)
+
+		// Создаём vault
+		CreateVault(vaultPath, integrationTestPassword)
+
+		// Добавляем файл
+		AddFileToVault(vaultPath, integrationTestPassword, testFile)
+
+		// Извлекаем файл
+		outputDir := filepath.Join(tmpDir, "bench_output_"+string(rune('a'+i)))
+		ExtractFromVault(vaultPath, integrationTestPassword, outputDir)
 	}
 }
 
-func BenchmarkAddFile(b *testing.B) {
-	tmpDir, _ := ioutil.TempDir("", "vault_bench_*")
+// BenchmarkMultipleFileOperations бенчмарк множественных операций
+func BenchmarkMultipleFileOperations(b *testing.B) {
+	tmpDir, _ := ioutil.TempDir("", "bench_multi_*")
 	defer os.RemoveAll(tmpDir)
 
-	vaultPath := filepath.Join(tmpDir, "bench_vault.dat")
-	CreateVault(vaultPath, testPassword)
-
-	testFilePath := filepath.Join(tmpDir, "bench_file.txt")
-	ioutil.WriteFile(testFilePath, []byte(testContent), 0644)
+	vaultPath := filepath.Join(tmpDir, "bench_multi.vault")
+	CreateVault(vaultPath, integrationTestPassword)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if err := AddFileToVault(vaultPath, testPassword, testFilePath); err != nil {
-			b.Fatalf("AddFileToVault failed: %v", err)
-		}
+		testFile := filepath.Join(tmpDir, "bench_file_"+string(rune('a'+i%26))+".txt")
+		ioutil.WriteFile(testFile, []byte("Benchmark content "+string(rune('a'+i%26))), 0644)
+
+		AddFileToVault(vaultPath, integrationTestPassword, testFile)
 	}
 }
