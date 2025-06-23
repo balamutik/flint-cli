@@ -205,3 +205,4 @@ docker-compose.override.yml
 
 .mdc
 .cursor
+test_data/
