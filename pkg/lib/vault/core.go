@@ -94,6 +94,16 @@ type ParallelStats struct {
 	ErrorsMutex     sync.Mutex    // Mutex for thread-safe error collection
 }
 
+// FileMetadata represents pre-calculated file metadata for batch operations
+type FileMetadata struct {
+	FilePath       string
+	StorePath      string
+	FileInfo       os.FileInfo
+	Hash           [32]byte
+	CompressedSize int64
+	Error          error
+}
+
 // DefaultParallelConfig creates default parallel processing configuration
 func DefaultParallelConfig() *ParallelConfig {
 	return &ParallelConfig{
@@ -354,93 +364,28 @@ func AddMultipleFilesToVaultParallel(vaultPath, password string, filePaths []str
 
 // addMultipleFilesToVaultParallelWithBasePath adds multiple files to vault in parallel with optional base path
 func addMultipleFilesToVaultParallelWithBasePath(vaultPath, password string, filePaths []string, basePath string, config *ParallelConfig) (*ParallelStats, error) {
-	stats := &ParallelStats{
-		TotalFiles: int64(len(filePaths)),
-	}
-	startTime := time.Now()
-
-	semaphore := make(chan struct{}, config.MaxConcurrency)
-	var wg sync.WaitGroup
-	vaultMutex := getVaultMutex(vaultPath) // Get vault-specific mutex
-
-	for _, filePath := range filePaths {
-		wg.Add(1)
-		go func(path string) {
-			defer wg.Done()
-			semaphore <- struct{}{}
-			defer func() { <-semaphore }()
-
-			if config.ProgressChan != nil {
-				config.ProgressChan <- fmt.Sprintf("Processing file: %s", path)
-			}
-
-			// Synchronize vault access
-			vaultMutex.Lock()
-			var err error
-			if basePath == "" {
-				err = AddFileToVault(vaultPath, password, path)
-			} else {
-				err = addFileToVaultWithBasePath(vaultPath, password, path, basePath)
-			}
-			vaultMutex.Unlock()
-
-			if err != nil {
-				atomic.AddInt64(&stats.FailedFiles, 1)
-				stats.ErrorsMutex.Lock()
-				stats.Errors = append(stats.Errors, fmt.Errorf("failed to add %s: %w", path, err))
-				stats.ErrorsMutex.Unlock()
-			} else {
-				atomic.AddInt64(&stats.SuccessfulFiles, 1)
-				if info, err := os.Stat(path); err == nil {
-					atomic.AddInt64(&stats.TotalSize, info.Size())
-				}
-			}
-		}(filePath)
-	}
-
-	wg.Wait()
-	stats.Duration = time.Since(startTime)
-
-	if len(stats.Errors) > 0 {
-		return stats, fmt.Errorf("parallel processing completed with %d errors", len(stats.Errors))
-	}
-
-	return stats, nil
+	// Always use optimized batch mode for best performance
+	return addMultipleFilesToVaultBatch(vaultPath, password, filePaths, basePath, config)
 }
 
-// AddDirectoryToVaultParallel adds directory to vault with parallel processing
+// AddDirectoryToVaultParallel adds directory to vault with optimized parallel processing
 func AddDirectoryToVaultParallel(vaultPath, password, dirPath string, config *ParallelConfig) (*ParallelStats, error) {
 	startTime := time.Now()
 
-	// First, add the root directory entry synchronously
-	rootInfo, err := os.Stat(dirPath)
-	if err != nil {
-		return nil, fmt.Errorf("directory info error: %w", err)
-	}
-
-	if err := addDirectoryEntry(vaultPath, password, dirPath, rootInfo, dirPath); err != nil {
-		return nil, fmt.Errorf("root directory add error: %w", err)
-	}
-
-	// Collect all files and subdirectories
+	// Collect all files and directories
 	var filePaths []string
-	var subDirs []struct {
+	var allDirs []struct {
 		path string
 		info os.FileInfo
 	}
 
-	err = filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
+	err := filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 
-		// Skip the root directory as we already added it
-		if path == dirPath {
-			return nil
-		}
-
 		if info.IsDir() {
-			subDirs = append(subDirs, struct {
+			allDirs = append(allDirs, struct {
 				path string
 				info os.FileInfo
 			}{path, info})
@@ -454,14 +399,18 @@ func AddDirectoryToVaultParallel(vaultPath, password, dirPath string, config *Pa
 		return nil, fmt.Errorf("directory traversal error: %w", err)
 	}
 
-	// Add all subdirectories synchronously (they're metadata-only operations)
-	for _, subDir := range subDirs {
-		if err := addDirectoryEntry(vaultPath, password, subDir.path, subDir.info, dirPath); err != nil {
-			return nil, fmt.Errorf("subdirectory add error for %s: %w", subDir.path, err)
+	// Add all directories first (they're metadata-only and fast)
+	if config.ProgressChan != nil {
+		config.ProgressChan <- fmt.Sprintf("Adding %d directories...", len(allDirs))
+	}
+
+	for _, dir := range allDirs {
+		if err := addDirectoryEntry(vaultPath, password, dir.path, dir.info, dirPath); err != nil {
+			return nil, fmt.Errorf("directory add error for %s: %w", dir.path, err)
 		}
 	}
 
-	// Add all files in parallel with proper base path
+	// Add all files using optimized batch mode
 	if len(filePaths) == 0 {
 		return &ParallelStats{
 			TotalFiles:      0,
@@ -471,9 +420,13 @@ func AddDirectoryToVaultParallel(vaultPath, password, dirPath string, config *Pa
 		}, nil
 	}
 
-	fileStats, err := addMultipleFilesToVaultParallelWithBasePath(vaultPath, password, filePaths, dirPath, config)
+	if config.ProgressChan != nil {
+		config.ProgressChan <- fmt.Sprintf("Processing %d files in batch mode...", len(filePaths))
+	}
+
+	fileStats, err := addMultipleFilesToVaultBatch(vaultPath, password, filePaths, dirPath, config)
 	if fileStats != nil {
-		// Add time spent on directory operations to total duration
+		// Adjust timing to include directory operations
 		fileStats.Duration = time.Since(startTime)
 	}
 	return fileStats, err
@@ -1354,4 +1307,296 @@ func RemoveFromVault(vaultPath, password string, paths []string) error {
 
 	// Update vault with optimized streaming approach
 	return updateVaultDirectoryStreamingOptimized(vaultPath, password, *vaultDir)
+}
+
+// addMultipleFilesToVaultBatch adds multiple files to vault in optimized batch mode
+func addMultipleFilesToVaultBatch(vaultPath, password string, filePaths []string, basePath string, config *ParallelConfig) (*ParallelStats, error) {
+	stats := &ParallelStats{
+		TotalFiles: int64(len(filePaths)),
+	}
+	startTime := time.Now()
+
+	if len(filePaths) == 0 {
+		stats.Duration = time.Since(startTime)
+		return stats, nil
+	}
+
+	// Phase 1: Parallel metadata calculation (no vault modifications)
+	metadataChan := make(chan FileMetadata, len(filePaths))
+	semaphore := make(chan struct{}, config.MaxConcurrency)
+	var wg sync.WaitGroup
+
+	for _, filePath := range filePaths {
+		wg.Add(1)
+		go func(path string) {
+			defer wg.Done()
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
+
+			if config.ProgressChan != nil {
+				config.ProgressChan <- fmt.Sprintf("Calculating metadata: %s", path)
+			}
+
+			metadata := FileMetadata{FilePath: path}
+
+			// Get file info
+			fileInfo, err := os.Stat(path)
+			if err != nil {
+				metadata.Error = fmt.Errorf("file info error: %w", err)
+				metadataChan <- metadata
+				return
+			}
+			metadata.FileInfo = fileInfo
+
+			// Calculate store path
+			if basePath == "" {
+				metadata.StorePath = fileInfo.Name()
+			} else {
+				relativePath, err := filepath.Rel(basePath, path)
+				if err != nil {
+					metadata.StorePath = filepath.Clean(path)
+				} else {
+					dirName := filepath.Base(basePath)
+					metadata.StorePath = filepath.Join(dirName, relativePath)
+				}
+			}
+
+			// Calculate hash and compressed size
+			hash, compressedSize, err := calculateFileMetadata(path)
+			if err != nil {
+				metadata.Error = fmt.Errorf("metadata calculation error: %w", err)
+				metadataChan <- metadata
+				return
+			}
+
+			metadata.Hash = hash
+			metadata.CompressedSize = compressedSize
+			metadataChan <- metadata
+		}(filePath)
+	}
+
+	// Close channel when all workers are done
+	go func() {
+		wg.Wait()
+		close(metadataChan)
+	}()
+
+	// Collect all metadata
+	var fileMetadata []FileMetadata
+	for metadata := range metadataChan {
+		fileMetadata = append(fileMetadata, metadata)
+		if metadata.Error != nil {
+			atomic.AddInt64(&stats.FailedFiles, 1)
+			stats.ErrorsMutex.Lock()
+			stats.Errors = append(stats.Errors, fmt.Errorf("failed to process %s: %w", metadata.FilePath, metadata.Error))
+			stats.ErrorsMutex.Unlock()
+		} else {
+			atomic.AddInt64(&stats.SuccessfulFiles, 1)
+			atomic.AddInt64(&stats.TotalSize, metadata.FileInfo.Size())
+		}
+	}
+
+	// Phase 2: Single vault reconstruction with all files
+	if stats.SuccessfulFiles > 0 {
+		var successfulMetadata []FileMetadata
+		for _, metadata := range fileMetadata {
+			if metadata.Error == nil {
+				successfulMetadata = append(successfulMetadata, metadata)
+			}
+		}
+
+		if config.ProgressChan != nil {
+			config.ProgressChan <- fmt.Sprintf("Writing %d files to vault...", len(successfulMetadata))
+		}
+
+		if err := addMultipleFilesToVaultSingleWrite(vaultPath, password, successfulMetadata); err != nil {
+			return stats, fmt.Errorf("vault reconstruction error: %w", err)
+		}
+	}
+
+	stats.Duration = time.Since(startTime)
+	return stats, nil
+}
+
+// addMultipleFilesToVaultSingleWrite reconstructs vault with all files in single operation
+func addMultipleFilesToVaultSingleWrite(vaultPath, password string, fileMetadata []FileMetadata) error {
+	// Load existing vault directory
+	vaultDir, err := loadVaultDirectory(vaultPath, password)
+	if err != nil {
+		return fmt.Errorf("vault directory load error: %w", err)
+	}
+
+	// Add all new file entries to vault directory
+	for _, metadata := range fileMetadata {
+		entry := FileEntry{
+			Path:           metadata.StorePath,
+			Name:           metadata.FileInfo.Name(),
+			IsDir:          false,
+			Size:           metadata.FileInfo.Size(),
+			CompressedSize: metadata.CompressedSize,
+			Mode:           uint32(metadata.FileInfo.Mode()),
+			ModTime:        metadata.FileInfo.ModTime(),
+			Offset:         0, // Will be calculated later
+			SHA256Hash:     metadata.Hash,
+		}
+
+		// Update or add entry
+		found := false
+		for i, existingEntry := range vaultDir.Entries {
+			if existingEntry.Path == entry.Path {
+				vaultDir.Entries[i] = entry
+				found = true
+				break
+			}
+		}
+		if !found {
+			vaultDir.Entries = append(vaultDir.Entries, entry)
+		}
+	}
+
+	// Reconstruct vault with all files in single operation
+	return addMultipleFilesToVaultStreamingBatch(vaultPath, password, *vaultDir, fileMetadata)
+}
+
+// addMultipleFilesToVaultStreamingBatch streams multiple files to vault in single reconstruction
+func addMultipleFilesToVaultStreamingBatch(vaultPath, password string, vaultDir VaultDirectory, fileMetadata []FileMetadata) error {
+	// Create temporary file for the new vault
+	tempPath := vaultPath + ".tmp"
+	defer os.Remove(tempPath)
+
+	// Open original vault file for reading
+	originalFile, err := os.Open(vaultPath)
+	if err != nil {
+		return fmt.Errorf("original file open error: %w", err)
+	}
+	defer originalFile.Close()
+
+	// Read original header
+	var originalHeader VaultHeader
+	if err := binary.Read(originalFile, binary.LittleEndian, &originalHeader); err != nil {
+		return fmt.Errorf("header read error: %w", err)
+	}
+
+	// Calculate file offsets for all entries
+	var totalDataSize int64 = 0
+	for i := range vaultDir.Entries {
+		if !vaultDir.Entries[i].IsDir {
+			vaultDir.Entries[i].Offset = totalDataSize
+			totalDataSize += vaultDir.Entries[i].CompressedSize
+		}
+	}
+
+	// Create vault directory data
+	jsonData, err := json.Marshal(vaultDir)
+	if err != nil {
+		return fmt.Errorf("directory serialization error: %w", err)
+	}
+
+	compressedDir, err := compressData(jsonData)
+	if err != nil {
+		return fmt.Errorf("directory compression error: %w", err)
+	}
+
+	// Encrypt directory
+	key := pbkdf2.Key([]byte(password), originalHeader.Salt[:], int(originalHeader.Iterations), KeyLength, sha256.New)
+	defer func() {
+		for i := range key {
+			key[i] = 0
+		}
+	}()
+
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return fmt.Errorf("AES cipher creation error: %w", err)
+	}
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return fmt.Errorf("GCM creation error: %w", err)
+	}
+
+	encryptedDir := gcm.Seal(nil, originalHeader.Nonce[:], compressedDir, nil)
+
+	// Create new header
+	newHeader := originalHeader
+	newHeader.DirectorySize = uint64(len(encryptedDir))
+
+	// Create temporary file
+	tempFile, err := os.Create(tempPath)
+	if err != nil {
+		return fmt.Errorf("temp file creation error: %w", err)
+	}
+	defer tempFile.Close()
+
+	// Write header and directory
+	if err := binary.Write(tempFile, binary.LittleEndian, newHeader); err != nil {
+		return fmt.Errorf("header write error: %w", err)
+	}
+	if _, err := tempFile.Write(encryptedDir); err != nil {
+		return fmt.Errorf("directory write error: %w", err)
+	}
+
+	// Stream existing file data (excluding new files)
+	existingFilePaths := make(map[string]bool)
+	for _, metadata := range fileMetadata {
+		existingFilePaths[metadata.StorePath] = true
+	}
+
+	headerSize := int64(binary.Size(VaultHeader{}))
+	originalDirectorySize := int64(originalHeader.DirectorySize)
+	originalDataOffset := headerSize + originalDirectorySize
+
+	buffer := make([]byte, StreamBufferSize)
+
+	// Copy existing files that are not being replaced
+	for _, entry := range vaultDir.Entries {
+		if entry.IsDir || existingFilePaths[entry.Path] {
+			continue // Skip directories and files being replaced
+		}
+
+		sourceOffset := originalDataOffset + entry.Offset
+		if _, err := originalFile.Seek(sourceOffset, io.SeekStart); err != nil {
+			return fmt.Errorf("existing file seek error: %w", err)
+		}
+
+		limitedReader := io.LimitReader(originalFile, entry.CompressedSize)
+		if _, err := io.CopyBuffer(tempFile, limitedReader, buffer); err != nil {
+			return fmt.Errorf("existing file copy error: %w", err)
+		}
+	}
+
+	// Stream all new files
+	for _, metadata := range fileMetadata {
+		sourceFile, err := os.Open(metadata.FilePath)
+		if err != nil {
+			return fmt.Errorf("source file open error for %s: %w", metadata.FilePath, err)
+		}
+
+		gzipWriter := gzip.NewWriter(tempFile)
+		if _, err := io.CopyBuffer(gzipWriter, sourceFile, buffer); err != nil {
+			sourceFile.Close()
+			gzipWriter.Close()
+			return fmt.Errorf("file compression error for %s: %w", metadata.FilePath, err)
+		}
+
+		if err := gzipWriter.Close(); err != nil {
+			sourceFile.Close()
+			return fmt.Errorf("compression finalization error for %s: %w", metadata.FilePath, err)
+		}
+		sourceFile.Close()
+	}
+
+	if err := tempFile.Sync(); err != nil {
+		return fmt.Errorf("temp file sync error: %w", err)
+	}
+
+	tempFile.Close()
+	originalFile.Close()
+
+	// Atomic replacement
+	if err := os.Rename(tempPath, vaultPath); err != nil {
+		return fmt.Errorf("file replacement error: %w", err)
+	}
+
+	return nil
 }

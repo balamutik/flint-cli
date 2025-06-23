@@ -3,13 +3,13 @@
 //
 // Available commands:
 //   - create: Create new encrypted vault
-//   - add: Add files or directories to vault (with parallel processing)
+//   - add: Add files or directories to vault (with high-performance batch processing)
 //   - list: Show vault contents
 //   - extract: Extract files from vault (with parallel processing)
 //   - remove: Remove files or directories from vault
 //   - info: Show vault file information without password
 //
-// All commands use optimized parallel processing and provide comprehensive error handling.
+// All commands use optimized batch processing and provide comprehensive error handling.
 package commands
 
 import (
@@ -85,7 +85,7 @@ func Run() {
 			},
 			{
 				Name:  "add",
-				Usage: "Add files or directories to vault (optimized with parallel processing)",
+				Usage: "Add files or directories to vault with high-performance batch processing",
 				Flags: []cli.Flag{
 					&cli.StringFlag{
 						Name:     "vault",
@@ -158,7 +158,11 @@ func Run() {
 
 					if info.IsDir() {
 						fmt.Printf("Adding directory '%s' to vault (workers: %d)...\n", sourcePath, config.MaxConcurrency)
-						stats, err := vault.AddDirectoryToVaultParallel(vaultPath, password, sourcePath, config)
+
+						var stats *vault.ParallelStats
+						var err error
+
+						stats, err = vault.AddDirectoryToVaultParallel(vaultPath, password, sourcePath, config)
 
 						if showProgress {
 							close(progressChan)
