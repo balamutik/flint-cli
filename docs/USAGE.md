@@ -168,10 +168,10 @@ flint-vault list -v my-vault.flint -p mypassword
 
 ### 4. extract - Extract All Files
 
-Extracts all files from the vault to a destination directory with full restoration and parallel processing.
+Extracts all files from the vault to a destination directory with full restoration and parallel processing. By default, files are extracted with only their filenames (without directory structure).
 
 ```bash
-flint-vault extract --vault <vault-file> --output <destination> [--password <password>] [--files <list>] [--workers <num>] [--progress]
+flint-vault extract --vault <vault-file> --output <destination> [--password <password>] [--files <list>] [--workers <num>] [--progress] [--extract-full-path]
 ```
 
 **Options:**
@@ -181,33 +181,69 @@ flint-vault extract --vault <vault-file> --output <destination> [--password <pas
 - `-f, --files <list>`: Specific files to extract (optional, extracts all if not specified)
 - `-w, --workers <num>`: Number of parallel workers (0 = auto-detect, default: 0)
 - `--progress`: Show progress information (default: true)
+- `--extract-full-path`: Extract files with full directory structure (default: false)
 
 **Examples:**
 
 ```bash
-# Extract all files to current directory
+# Extract all files with flat structure (default behavior)
 flint-vault extract --vault my-vault.flint --output ./
 
-# Extract with parallel processing
+# Extract all files with full directory structure
+flint-vault extract --vault my-vault.flint --output ./ --extract-full-path
+
+# Extract with parallel processing and flat structure
 flint-vault extract -v my-vault.flint -o ~/restored-files/ --workers 6
 
-# Extract specific files in parallel
-flint-vault extract -v my-vault.flint -o ./output/ --files file1.txt,file2.pdf,folder/ --workers 4
+# Extract specific files with full directory structure
+flint-vault extract -v my-vault.flint -o ./output/ --files file1.txt,docs/file2.pdf --extract-full-path
 
-# Extract with automatic optimization
+# Extract with automatic optimization (flat structure)
 flint-vault extract -v my-vault.flint -o ./backup/
 
-# High-performance extraction for large vaults
-flint-vault extract -v large-vault.flint -o ./data/ --workers 8 --progress
+# High-performance extraction for large vaults with full paths
+flint-vault extract -v large-vault.flint -o ./data/ --workers 8 --progress --extract-full-path
+```
+
+**Directory Structure Examples:**
+
+If your vault contains:
+```
+documents/report.pdf
+images/photo.jpg
+project/src/main.go
+config.json
+```
+
+**Without `--extract-full-path` (default):**
+```
+output/
+├── report.pdf
+├── photo.jpg
+├── main.go
+└── config.json
+```
+
+**With `--extract-full-path`:**
+```
+output/
+├── documents/
+│   └── report.pdf
+├── images/
+│   └── photo.jpg
+├── project/
+│   └── src/
+│       └── main.go
+└── config.json
 ```
 
 **Output Example:**
 ```
-Extracting all files to directory: ./restored-files/
+Extracting all files to: ./restored-files/ (full-path: false)
 Using 6 parallel workers for extraction...
 🔄 Extracting: documents/report.pdf (1.2 MB)
 🔄 Extracting: images/photo.jpg (845 KB)
-🔄 Extracting: data/dataset.csv (15.3 MB)
+🔄 Extracting: project/src/main.go (2.1 KB)
 ...
 ✅ Successfully extracted 187 files
 📊 Total extracted: 2.1 GB in 8.3 seconds
@@ -218,9 +254,15 @@ Using 6 parallel workers for extraction...
 **Performance:**
 - **High-speed extraction**: Up to 400+ MB/s with parallel processing
 - **Memory efficient**: Streaming operations for large files
-- **Full restoration**: Directory structure, permissions, timestamps
+- **Full restoration**: Directory structure, permissions, timestamps (when using `--extract-full-path`)
 - **Selective extraction**: Extract only specified files for efficiency
+- **Flat extraction**: Quick access to files without nested directories (default)
 - **Automatic optimization**: Uses optimal worker count based on file types
+
+**Use Cases:**
+- **Flat extraction (default)**: When you need quick access to files without caring about original structure
+- **Full path extraction**: When you need to preserve the original directory organization
+- **Mixed workflows**: Use flat for quick access, full-path for archival restoration
 
 ### 5. get - Extract Specific Files
 

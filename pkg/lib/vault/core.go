@@ -283,6 +283,11 @@ func AddDirectoryToVault(vaultPath, password, dirPath string) error {
 
 // ExtractFromVault extracts all files from vault to specified directory
 func ExtractFromVault(vaultPath, password, outputDir string) error {
+	return ExtractFromVaultWithOptions(vaultPath, password, outputDir, true)
+}
+
+// ExtractFromVaultWithOptions extracts all files from vault with extraction options
+func ExtractFromVaultWithOptions(vaultPath, password, outputDir string, extractFullPath bool) error {
 	vaultDir, err := loadVaultDirectory(vaultPath, password)
 	if err != nil {
 		return err
@@ -294,12 +299,15 @@ func ExtractFromVault(vaultPath, password, outputDir string) error {
 
 	for _, entry := range vaultDir.Entries {
 		if entry.IsDir {
-			dirPath := filepath.Join(outputDir, entry.Path)
-			if err := os.MkdirAll(dirPath, os.FileMode(entry.Mode)); err != nil {
-				return fmt.Errorf("directory creation error: %w", err)
+			if extractFullPath {
+				dirPath := filepath.Join(outputDir, entry.Path)
+				if err := os.MkdirAll(dirPath, os.FileMode(entry.Mode)); err != nil {
+					return fmt.Errorf("directory creation error: %w", err)
+				}
 			}
+			// Skip directory creation if not extracting full path
 		} else {
-			if err := extractFileEntry(vaultPath, password, entry, outputDir); err != nil {
+			if err := extractFileEntry(vaultPath, password, entry, outputDir, extractFullPath); err != nil {
 				return fmt.Errorf("file extraction error for %s: %w", entry.Path, err)
 			}
 		}
@@ -310,6 +318,11 @@ func ExtractFromVault(vaultPath, password, outputDir string) error {
 
 // GetFromVault extracts specific files from vault
 func GetFromVault(vaultPath, password, outputDir string, targetPaths []string) error {
+	return GetFromVaultWithOptions(vaultPath, password, outputDir, targetPaths, true)
+}
+
+// GetFromVaultWithOptions extracts specific files from vault with extraction options
+func GetFromVaultWithOptions(vaultPath, password, outputDir string, targetPaths []string, extractFullPath bool) error {
 	vaultDir, err := loadVaultDirectory(vaultPath, password)
 	if err != nil {
 		return err
@@ -328,12 +341,15 @@ func GetFromVault(vaultPath, password, outputDir string, targetPaths []string) e
 	for _, entry := range vaultDir.Entries {
 		if targetMap[entry.Path] {
 			if entry.IsDir {
-				dirPath := filepath.Join(outputDir, entry.Path)
-				if err := os.MkdirAll(dirPath, os.FileMode(entry.Mode)); err != nil {
-					return fmt.Errorf("directory creation error: %w", err)
+				if extractFullPath {
+					dirPath := filepath.Join(outputDir, entry.Path)
+					if err := os.MkdirAll(dirPath, os.FileMode(entry.Mode)); err != nil {
+						return fmt.Errorf("directory creation error: %w", err)
+					}
 				}
+				// Skip directory creation if not extracting full path
 			} else {
-				if err := extractFileEntry(vaultPath, password, entry, outputDir); err != nil {
+				if err := extractFileEntry(vaultPath, password, entry, outputDir, extractFullPath); err != nil {
 					return fmt.Errorf("file extraction error for %s: %w", entry.Path, err)
 				}
 			}
@@ -434,6 +450,11 @@ func AddDirectoryToVaultParallel(vaultPath, password, dirPath string, config *Pa
 
 // ExtractMultipleFilesFromVaultParallel extracts multiple files from vault in parallel
 func ExtractMultipleFilesFromVaultParallel(vaultPath, password, outputDir string, targetPaths []string, config *ParallelConfig) (*ParallelStats, error) {
+	return ExtractMultipleFilesFromVaultParallelWithOptions(vaultPath, password, outputDir, targetPaths, config, true)
+}
+
+// ExtractMultipleFilesFromVaultParallelWithOptions extracts multiple files from vault in parallel with extraction options
+func ExtractMultipleFilesFromVaultParallelWithOptions(vaultPath, password, outputDir string, targetPaths []string, config *ParallelConfig, extractFullPath bool) (*ParallelStats, error) {
 	vaultDir, err := loadVaultDirectory(vaultPath, password)
 	if err != nil {
 		return nil, err
@@ -477,17 +498,22 @@ func ExtractMultipleFilesFromVaultParallel(vaultPath, password, outputDir string
 			}
 
 			if e.IsDir {
-				dirPath := filepath.Join(outputDir, e.Path)
-				if err := os.MkdirAll(dirPath, os.FileMode(e.Mode)); err != nil {
-					atomic.AddInt64(&stats.FailedFiles, 1)
-					stats.ErrorsMutex.Lock()
-					stats.Errors = append(stats.Errors, fmt.Errorf("failed to create directory %s: %w", e.Path, err))
-					stats.ErrorsMutex.Unlock()
+				if extractFullPath {
+					dirPath := filepath.Join(outputDir, e.Path)
+					if err := os.MkdirAll(dirPath, os.FileMode(e.Mode)); err != nil {
+						atomic.AddInt64(&stats.FailedFiles, 1)
+						stats.ErrorsMutex.Lock()
+						stats.Errors = append(stats.Errors, fmt.Errorf("failed to create directory %s: %w", e.Path, err))
+						stats.ErrorsMutex.Unlock()
+					} else {
+						atomic.AddInt64(&stats.SuccessfulFiles, 1)
+					}
 				} else {
+					// Skip directory creation if not extracting full path
 					atomic.AddInt64(&stats.SuccessfulFiles, 1)
 				}
 			} else {
-				if err := extractFileEntry(vaultPath, password, e, outputDir); err != nil {
+				if err := extractFileEntry(vaultPath, password, e, outputDir, extractFullPath); err != nil {
 					atomic.AddInt64(&stats.FailedFiles, 1)
 					stats.ErrorsMutex.Lock()
 					stats.Errors = append(stats.Errors, fmt.Errorf("failed to extract %s: %w", e.Path, err))
@@ -1196,8 +1222,23 @@ func compareHashesConstantTime(a, b []byte) bool {
 // ========================
 
 // extractFileEntry extracts a single file entry from vault using STREAMING processing
-func extractFileEntry(vaultPath, password string, entry FileEntry, outputDir string) error {
-	outputPath := filepath.Join(outputDir, entry.Path)
+func extractFileEntry(vaultPath, password string, entry FileEntry, outputDir string, extractFullPath bool) error {
+	var outputPath string
+
+	if extractFullPath {
+		// Extract with full directory structure (original behavior)
+		outputPath = filepath.Join(outputDir, entry.Path)
+	} else {
+		// Extract without directory structure - just the filename
+		if entry.IsDir {
+			// For directories, extract with full path if they're not at root level
+			outputPath = filepath.Join(outputDir, entry.Path)
+		} else {
+			// For files, extract only the filename without directory structure
+			filename := filepath.Base(entry.Path)
+			outputPath = filepath.Join(outputDir, filename)
+		}
+	}
 
 	if entry.IsDir {
 		// Create directory

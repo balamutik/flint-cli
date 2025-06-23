@@ -868,3 +868,266 @@ func BenchmarkCompressionFunctions(b *testing.B) {
 		}
 	}
 }
+
+// TestExtractFromVaultWithOptions тестирует извлечение с опциями
+func TestExtractFromVaultWithOptions(t *testing.T) {
+	tmpDir := setupCoreTest(t)
+	defer cleanupCoreTest(t, tmpDir)
+
+	vaultPath := filepath.Join(tmpDir, "test.vault")
+	outputDirFull := filepath.Join(tmpDir, "output_full")
+	outputDirFlat := filepath.Join(tmpDir, "output_flat")
+
+	// Создаём vault
+	if err := CreateVault(vaultPath, testPassword); err != nil {
+		t.Fatalf("CreateVault failed: %v", err)
+	}
+
+	// Создаём тестовую структуру каталогов
+	testDir := filepath.Join(tmpDir, "testdata")
+	if err := os.MkdirAll(filepath.Join(testDir, "subdir"), 0755); err != nil {
+		t.Fatalf("Failed to create test directory: %v", err)
+	}
+
+	// Создаём файлы в разных каталогах
+	rootFile := createTestFile(t, testDir, "root.txt", "Root file content")
+	subFile := createTestFile(t, filepath.Join(testDir, "subdir"), "sub.txt", "Sub file content")
+
+	// Добавляем файлы в vault
+	if err := AddFileToVault(vaultPath, testPassword, rootFile); err != nil {
+		t.Fatalf("AddFileToVault failed for root file: %v", err)
+	}
+	if err := AddFileToVault(vaultPath, testPassword, subFile); err != nil {
+		t.Fatalf("AddFileToVault failed for sub file: %v", err)
+	}
+
+	// Тест извлечения с полными путями (extractFullPath = true)
+	err := ExtractFromVaultWithOptions(vaultPath, testPassword, outputDirFull, true)
+	if err != nil {
+		t.Fatalf("ExtractFromVaultWithOptions with full paths failed: %v", err)
+	}
+
+	// Проверяем что файлы извлечены с полной структурой каталогов
+	entries, err := ListVault(vaultPath, testPassword)
+	if err != nil {
+		t.Fatalf("ListVault failed: %v", err)
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir {
+			fullPath := filepath.Join(outputDirFull, entry.Path)
+			if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+				t.Errorf("Expected file with full path %s to exist", fullPath)
+			}
+		}
+	}
+
+	// Тест извлечения без полных путей (extractFullPath = false)
+	err = ExtractFromVaultWithOptions(vaultPath, testPassword, outputDirFlat, false)
+	if err != nil {
+		t.Fatalf("ExtractFromVaultWithOptions without full paths failed: %v", err)
+	}
+
+	// Проверяем что файлы извлечены только с именами файлов
+	for _, entry := range entries {
+		if !entry.IsDir {
+			filename := filepath.Base(entry.Path)
+			flatPath := filepath.Join(outputDirFlat, filename)
+			if _, err := os.Stat(flatPath); os.IsNotExist(err) {
+				t.Errorf("Expected file with flat name %s to exist", flatPath)
+			}
+
+			// Проверяем что полный путь НЕ создан
+			fullPath := filepath.Join(outputDirFlat, entry.Path)
+			if fullPath != flatPath { // Только если это разные пути
+				if _, err := os.Stat(fullPath); err == nil {
+					t.Errorf("Did not expect file with full path %s to exist in flat extraction", fullPath)
+				}
+			}
+		}
+	}
+
+	// Проверяем содержимое файлов
+	rootContent, err := ioutil.ReadFile(filepath.Join(outputDirFlat, "root.txt"))
+	if err != nil {
+		t.Fatalf("Failed to read extracted root file: %v", err)
+	}
+	if string(rootContent) != "Root file content" {
+		t.Errorf("Root file content mismatch")
+	}
+
+	subContent, err := ioutil.ReadFile(filepath.Join(outputDirFlat, "sub.txt"))
+	if err != nil {
+		t.Fatalf("Failed to read extracted sub file: %v", err)
+	}
+	if string(subContent) != "Sub file content" {
+		t.Errorf("Sub file content mismatch")
+	}
+}
+
+// TestExtractMultipleFilesWithOptions тестирует параллельное извлечение с опциями
+func TestExtractMultipleFilesWithOptions(t *testing.T) {
+	tmpDir := setupCoreTest(t)
+	defer cleanupCoreTest(t, tmpDir)
+
+	vaultPath := filepath.Join(tmpDir, "test.vault")
+	outputDirFull := filepath.Join(tmpDir, "output_full")
+	outputDirFlat := filepath.Join(tmpDir, "output_flat")
+
+	// Создаём vault
+	if err := CreateVault(vaultPath, testPassword); err != nil {
+		t.Fatalf("CreateVault failed: %v", err)
+	}
+
+	// Создаём тестовую структуру
+	testDir := filepath.Join(tmpDir, "testdata")
+	if err := os.MkdirAll(filepath.Join(testDir, "docs"), 0755); err != nil {
+		t.Fatalf("Failed to create test directory: %v", err)
+	}
+
+	// Создаём файлы
+	file1 := createTestFile(t, testDir, "file1.txt", "File 1 content")
+	file2 := createTestFile(t, filepath.Join(testDir, "docs"), "file2.txt", "File 2 content")
+
+	// Добавляем файлы в vault
+	if err := AddFileToVault(vaultPath, testPassword, file1); err != nil {
+		t.Fatalf("AddFileToVault failed: %v", err)
+	}
+	if err := AddFileToVault(vaultPath, testPassword, file2); err != nil {
+		t.Fatalf("AddFileToVault failed: %v", err)
+	}
+
+	// Получаем пути файлов в vault
+	entries, err := ListVault(vaultPath, testPassword)
+	if err != nil {
+		t.Fatalf("ListVault failed: %v", err)
+	}
+
+	var targetPaths []string
+	for _, entry := range entries {
+		if !entry.IsDir {
+			targetPaths = append(targetPaths, entry.Path)
+		}
+	}
+
+	if len(targetPaths) != 2 {
+		t.Fatalf("Expected 2 target files, got %d", len(targetPaths))
+	}
+
+	// Тест параллельного извлечения с полными путями
+	config := DefaultParallelConfig()
+	config.MaxConcurrency = 2
+
+	stats, err := ExtractMultipleFilesFromVaultParallelWithOptions(vaultPath, testPassword, outputDirFull, targetPaths, config, true)
+	if err != nil {
+		t.Fatalf("ExtractMultipleFilesFromVaultParallelWithOptions with full paths failed: %v", err)
+	}
+
+	if stats.SuccessfulFiles != int64(len(targetPaths)) {
+		t.Errorf("Expected %d successful extractions, got %d", len(targetPaths), stats.SuccessfulFiles)
+	}
+
+	// Проверяем файлы с полными путями
+	for _, targetPath := range targetPaths {
+		fullPath := filepath.Join(outputDirFull, targetPath)
+		if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+			t.Errorf("Expected file with full path %s to exist", fullPath)
+		}
+	}
+
+	// Тест параллельного извлечения без полных путей
+	stats, err = ExtractMultipleFilesFromVaultParallelWithOptions(vaultPath, testPassword, outputDirFlat, targetPaths, config, false)
+	if err != nil {
+		t.Fatalf("ExtractMultipleFilesFromVaultParallelWithOptions without full paths failed: %v", err)
+	}
+
+	if stats.SuccessfulFiles != int64(len(targetPaths)) {
+		t.Errorf("Expected %d successful extractions, got %d", len(targetPaths), stats.SuccessfulFiles)
+	}
+
+	// Проверяем файлы без полных путей
+	for _, targetPath := range targetPaths {
+		filename := filepath.Base(targetPath)
+		flatPath := filepath.Join(outputDirFlat, filename)
+		if _, err := os.Stat(flatPath); os.IsNotExist(err) {
+			t.Errorf("Expected file with flat name %s to exist", flatPath)
+		}
+	}
+}
+
+// TestGetFromVaultWithOptions тестирует селективное извлечение с опциями
+func TestGetFromVaultWithOptions(t *testing.T) {
+	tmpDir := setupCoreTest(t)
+	defer cleanupCoreTest(t, tmpDir)
+
+	vaultPath := filepath.Join(tmpDir, "test.vault")
+	outputDirFull := filepath.Join(tmpDir, "output_full")
+	outputDirFlat := filepath.Join(tmpDir, "output_flat")
+
+	// Создаём vault
+	if err := CreateVault(vaultPath, testPassword); err != nil {
+		t.Fatalf("CreateVault failed: %v", err)
+	}
+
+	// Создаём тестовые файлы в подкаталоге
+	testDir := filepath.Join(tmpDir, "testdata")
+	if err := os.MkdirAll(filepath.Join(testDir, "project", "src"), 0755); err != nil {
+		t.Fatalf("Failed to create test directory: %v", err)
+	}
+
+	testFile := createTestFile(t, filepath.Join(testDir, "project", "src"), "main.go", "package main")
+
+	// Добавляем файл в vault
+	if err := AddFileToVault(vaultPath, testPassword, testFile); err != nil {
+		t.Fatalf("AddFileToVault failed: %v", err)
+	}
+
+	// Получаем путь файла в vault
+	entries, err := ListVault(vaultPath, testPassword)
+	if err != nil {
+		t.Fatalf("ListVault failed: %v", err)
+	}
+
+	var targetPath string
+	for _, entry := range entries {
+		if entry.Name == "main.go" {
+			targetPath = entry.Path
+			break
+		}
+	}
+
+	if targetPath == "" {
+		t.Fatal("main.go not found in vault")
+	}
+
+	// Тест извлечения с полным путем
+	err = GetFromVaultWithOptions(vaultPath, testPassword, outputDirFull, []string{targetPath}, true)
+	if err != nil {
+		t.Fatalf("GetFromVaultWithOptions with full path failed: %v", err)
+	}
+
+	fullPath := filepath.Join(outputDirFull, targetPath)
+	if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+		t.Errorf("Expected file with full path %s to exist", fullPath)
+	}
+
+	// Тест извлечения без полного пути
+	err = GetFromVaultWithOptions(vaultPath, testPassword, outputDirFlat, []string{targetPath}, false)
+	if err != nil {
+		t.Fatalf("GetFromVaultWithOptions without full path failed: %v", err)
+	}
+
+	flatPath := filepath.Join(outputDirFlat, "main.go")
+	if _, err := os.Stat(flatPath); os.IsNotExist(err) {
+		t.Errorf("Expected file with flat name %s to exist", flatPath)
+	}
+
+	// Проверяем содержимое
+	content, err := ioutil.ReadFile(flatPath)
+	if err != nil {
+		t.Fatalf("Failed to read extracted file: %v", err)
+	}
+	if string(content) != "package main" {
+		t.Errorf("File content mismatch")
+	}
+}

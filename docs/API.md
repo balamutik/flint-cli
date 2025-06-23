@@ -265,6 +265,79 @@ fmt.Printf("✅ Extracted %d files in %v\n",
     stats.SuccessfulFiles, stats.Duration)
 ```
 
+### ExtractMultipleFilesFromVaultParallelWithOptions
+
+Extracts multiple files from vault in parallel with extraction options.
+
+```go
+func ExtractMultipleFilesFromVaultParallelWithOptions(vaultPath, password, outputDir string, targetPaths []string, config *ParallelConfig, extractFullPath bool) (*ParallelStats, error)
+```
+
+**Parameters:**
+- All parameters from `ExtractMultipleFilesFromVaultParallel`
+- `extractFullPath`: Controls directory structure preservation
+
+**Features:**
+- **High-performance extraction**: Parallel processing with configurable workers
+- **Flexible structure**: Choose extraction style
+- **Progress monitoring**: Real-time status updates
+- **Comprehensive statistics**: Detailed performance metrics
+
+**Examples:**
+```go
+config := vault.DefaultParallelConfig()
+config.MaxConcurrency = 8
+
+// Set up progress monitoring
+progressChan := make(chan string, 100)
+config.ProgressChan = progressChan
+
+go func() {
+    for msg := range progressChan {
+        fmt.Printf("🔄 %s\n", msg)
+    }
+}()
+
+targets := []string{
+    "documents/report.pdf",
+    "project/src/main.go",
+    "data/dataset.csv",
+}
+
+// Extract with full directory structure
+stats, err := vault.ExtractMultipleFilesFromVaultParallelWithOptions(
+    "my-vault.flint",
+    "password",
+    "./structured-output/",
+    targets,
+    config,
+    true) // extractFullPath = true
+
+close(progressChan)
+
+if err != nil {
+    log.Fatalf("Parallel extraction failed: %v", err)
+}
+
+vault.PrintParallelStats(stats)
+
+// Extract with flat structure for quick access
+flatStats, err := vault.ExtractMultipleFilesFromVaultParallelWithOptions(
+    "my-vault.flint",
+    "password",
+    "./flat-output/",
+    targets,
+    config,
+    false) // extractFullPath = false
+
+if err != nil {
+    log.Fatalf("Flat extraction failed: %v", err)
+}
+
+fmt.Printf("✅ Extracted %d files (flat) in %v\n", 
+    flatStats.SuccessfulFiles, flatStats.Duration)
+```
+
 ### PrintParallelStats
 
 Prints detailed statistics from parallel operations.
@@ -352,6 +425,44 @@ if err != nil {
 fmt.Println("✅ All files extracted successfully!")
 ```
 
+### ExtractFromVaultWithOptions
+
+Extracts all files from the vault with extraction options.
+
+```go
+func ExtractFromVaultWithOptions(vaultPath, password, outputDir string, extractFullPath bool) error
+```
+
+**Parameters:**
+- `vaultPath`: Path to the vault file
+- `password`: Vault password
+- `outputDir`: Directory where files will be extracted
+- `extractFullPath`: If true, preserves directory structure; if false, extracts only filenames
+
+**Features:**
+- **Flexible extraction**: Choose between flat or structured extraction
+- **Directory structure control**: Preserve or flatten hierarchy
+- **Same performance**: Optimized streaming operations
+
+**Examples:**
+```go
+// Extract with full directory structure (traditional behavior)
+err := vault.ExtractFromVaultWithOptions("my-vault.flint", "password", "./extracted/", true)
+if err != nil {
+    log.Fatalf("Failed to extract with full paths: %v", err)
+}
+
+// Extract with flat structure (files only)
+err = vault.ExtractFromVaultWithOptions("my-vault.flint", "password", "./flat/", false)
+if err != nil {
+    log.Fatalf("Failed to extract flat: %v", err)
+}
+```
+
+**Use Cases:**
+- **Full structure (`extractFullPath=true`)**: Archival restoration, maintaining organization
+- **Flat structure (`extractFullPath=false`)**: Quick file access, simple processing workflows
+
 ### GetFromVault
 
 Extracts specific files or directories from the vault.
@@ -379,6 +490,65 @@ if err != nil {
     log.Fatalf("Extraction failed: %v", err)
 }
 fmt.Println("✅ Selected files extracted successfully!")
+```
+
+### GetFromVaultWithOptions
+
+Extracts specific files from the vault with extraction options.
+
+```go
+func GetFromVaultWithOptions(vaultPath, password, outputDir string, targets []string, extractFullPath bool) error
+```
+
+**Parameters:**
+- `vaultPath`: Path to the vault file
+- `password`: Vault password
+- `outputDir`: Directory where files will be extracted
+- `targets`: Slice of file/directory paths to extract
+- `extractFullPath`: If true, preserves directory structure; if false, extracts only filenames
+
+**Features:**
+- **Selective + flexible**: Choose specific files AND extraction style
+- **Performance optimized**: Same efficiency as other extraction methods
+- **Directory handling**: Smart handling of directories vs files
+
+**Examples:**
+```go
+targets := []string{
+    "documents/report.pdf",
+    "project/src/main.go",
+    "config.json",
+}
+
+// Extract specific files with full directory structure
+err := vault.GetFromVaultWithOptions("my-vault.flint", "password", "./structured/", targets, true)
+if err != nil {
+    log.Fatalf("Structured extraction failed: %v", err)
+}
+
+// Extract specific files with flat structure
+err = vault.GetFromVaultWithOptions("my-vault.flint", "password", "./flat/", targets, false)
+if err != nil {
+    log.Fatalf("Flat extraction failed: %v", err)
+}
+```
+
+**Result Comparison:**
+```
+# With extractFullPath=true:
+structured/
+├── documents/
+│   └── report.pdf
+├── project/
+│   └── src/
+│       └── main.go
+└── config.json
+
+# With extractFullPath=false:
+flat/
+├── report.pdf
+├── main.go
+└── config.json
 ```
 
 ### RemoveFromVault

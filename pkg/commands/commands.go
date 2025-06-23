@@ -281,6 +281,11 @@ func Run() {
 						Usage: "Show progress information",
 						Value: true,
 					},
+					&cli.BoolFlag{
+						Name:  "extract-full-path",
+						Usage: "Extract files with full directory structure (default: false, extracts only filenames)",
+						Value: false,
+					},
 				},
 				Action: func(ctx context.Context, cmd *cli.Command) error {
 					vaultPath := cmd.String("vault")
@@ -289,6 +294,7 @@ func Run() {
 					specificFiles := cmd.StringSlice("files")
 					workers := cmd.Int("workers")
 					showProgress := cmd.Bool("progress")
+					extractFullPath := cmd.Bool("extract-full-path")
 
 					if password == "" {
 						var err error
@@ -318,8 +324,8 @@ func Run() {
 
 					if len(specificFiles) > 0 {
 						// Extract specific files in parallel
-						fmt.Printf("Extracting %d specific files (workers: %d)...\n", len(specificFiles), config.MaxConcurrency)
-						stats, err := vault.ExtractMultipleFilesFromVaultParallel(vaultPath, password, outputDir, specificFiles, config)
+						fmt.Printf("Extracting %d specific files (workers: %d, full-path: %v)...\n", len(specificFiles), config.MaxConcurrency, extractFullPath)
+						stats, err := vault.ExtractMultipleFilesFromVaultParallelWithOptions(vaultPath, password, outputDir, specificFiles, config, extractFullPath)
 
 						if showProgress {
 							close(progressChan)
@@ -332,8 +338,8 @@ func Run() {
 						vault.PrintParallelStats(stats)
 					} else {
 						// Extract all files using optimized streaming
-						fmt.Printf("Extracting all files to: %s\n", outputDir)
-						if err := vault.ExtractFromVault(vaultPath, password, outputDir); err != nil {
+						fmt.Printf("Extracting all files to: %s (full-path: %v)\n", outputDir, extractFullPath)
+						if err := vault.ExtractFromVaultWithOptions(vaultPath, password, outputDir, extractFullPath); err != nil {
 							return fmt.Errorf("extraction error: %w", err)
 						}
 						fmt.Printf("✅ All files successfully extracted!\n")

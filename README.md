@@ -82,11 +82,17 @@ chmod +x flint-vault
 # List vault contents
 ./flint-vault list -v my-vault.flint
 
-# Extract all files with parallel processing
+# Extract all files with parallel processing (flat structure - default)
 ./flint-vault extract -v my-vault.flint -o ./extracted/ --workers 4
 
-# Extract specific files in parallel
-./flint-vault extract -v my-vault.flint -o ./output/ --files file1.txt file2.pdf --workers 2
+# Extract all files preserving directory structure
+./flint-vault extract -v my-vault.flint -o ./restored/ --workers 4 --extract-full-path
+
+# Extract specific files in parallel (flat structure)
+./flint-vault extract -v my-vault.flint -o ./output/ --files file1.txt,file2.pdf --workers 2
+
+# Extract specific files preserving directory structure
+./flint-vault extract -v my-vault.flint -o ./output/ --files docs/report.pdf,project/src/ --workers 2 --extract-full-path
 
 # Remove files from vault
 ./flint-vault remove -v my-vault.flint -t unwanted.txt
@@ -99,6 +105,7 @@ chmod +x flint-vault
 
 - [Installation Guide](docs/INSTALLATION.md)
 - [User Manual](docs/USAGE.md)
+- [File Extraction Modes](docs/EXTRACT_MODES.md) 🆕
 - [Parallel Processing Guide](docs/PARALLEL_PROCESSING.md) 🆕
 - [Migration Guide](docs/MIGRATION.md) 🆕
 - [API Documentation](docs/API.md)
