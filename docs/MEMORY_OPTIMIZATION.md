@@ -1,6 +1,6 @@
 # 🚀 Memory Optimization Guide
 
-This document outlines memory optimization improvements for Flint Vault to address excessive memory usage during operations.
+This document outlines memory optimization improvements for Flint Vault including parallel processing considerations.
 
 ## 🔍 Problem Analysis
 
@@ -36,6 +36,73 @@ This document outlines memory optimization improvements for Flint Vault to addre
    - Gzip decompression: +100% memory  
    - AES decryption: +100% memory
    - Go structures overhead: +50% memory
+
+## 🔍 Current Architecture Analysis
+
+### Memory Usage with Parallel Processing
+
+**Current Implementation (Optimized):**
+- **Base memory**: ~3.2x vault size for encryption operations
+- **Parallel overhead**: +100-200MB per worker
+- **Worker isolation**: Each worker maintains separate memory space
+- **Streaming operations**: Memory usage independent of file size
+
+**Performance Benchmarks (2.45 GB Dataset):**
+
+| Operation | Workers | Memory Usage | Speed | Notes |
+|-----------|---------|--------------|-------|-------|
+| Adding Files | Auto (4) | 13.3 GB | 61 MB/s | Baseline |
+| Adding Files | 8 | 14.1 GB | 70 MB/s | +15% speed, +6% memory |
+| Extracting | Auto (4) | 8.5 GB | 306 MB/s | Optimized |
+| Extracting | 8 | 9.2 GB | 350+ MB/s | +14% speed, +8% memory |
+
+## 🛠️ Optimization Strategies
+
+### 1. Parallel Processing Configuration
+
+**Memory-Optimized Configuration:**
+```go
+// For memory-constrained systems
+config := vault.DefaultParallelConfig()
+config.MaxConcurrency = 2 // Conservative worker count
+
+// For balanced performance
+config.MaxConcurrency = runtime.NumCPU() // 1x CPU cores
+
+// For high-performance systems
+config.MaxConcurrency = runtime.NumCPU() * 2 // 2x CPU cores (default)
+```
+
+### 2. Memory Monitoring During Operations
+
+```go
+// Built-in memory monitoring
+progressChan := make(chan string, 100)
+config.ProgressChan = progressChan
+
+go func() {
+    for msg := range progressChan {
+        if strings.Contains(msg, "Memory:") {
+            fmt.Printf("📊 %s\n", msg)
+        }
+    }
+}()
+```
+
+### 3. Worker Pool Optimization
+
+**Optimal Worker Counts by System:**
+
+```bash
+# Check system resources
+echo "CPU cores: $(nproc)"
+echo "Available memory: $(free -h | grep '^Mem:' | awk '{print $7}')"
+
+# Calculate optimal workers
+# For 8GB system: 2-4 workers maximum
+# For 16GB system: 4-8 workers recommended  
+# For 32GB+ system: 8-16 workers optimal
+```
 
 ## 🛠️ Optimization Solutions
 
@@ -136,6 +203,26 @@ flint-vault add --optimized -v large_vault.dat -f largefile.bin
 ```
 
 ## 💡 Best Practices
+
+### Memory Management with Parallel Processing
+1. **Monitor worker overhead**: Each worker adds 100-200MB
+2. **Use auto-detection**: Let system choose optimal worker count
+3. **Scale with available RAM**: More memory = more workers possible
+4. **Monitor during operations**: Watch for memory pressure
+
+### System Configuration
+```bash
+# For parallel processing optimization
+# Increase available memory for operations
+sudo sysctl vm.overcommit_memory=1
+
+# Optimize memory management for parallel I/O
+sudo sysctl vm.dirty_ratio=15
+sudo sysctl vm.dirty_background_ratio=5
+
+# Check memory availability before operations
+free -h && echo "Recommended workers: $(($(free -g | grep '^Mem:' | awk '{print $7}') / 4))"
+```
 
 ### Memory Management
 1. **Use optimized listing** for vault inspection

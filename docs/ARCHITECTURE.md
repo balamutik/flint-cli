@@ -8,9 +8,10 @@ This document provides a comprehensive overview of Flint Vault's architecture, d
 - **Security**: Military-grade encryption with proven algorithms
 - **Reliability**: Robust error handling and data integrity
 - **Performance**: Efficient operations with large files
+- **Parallel Processing**: Configurable worker pools for optimal throughput
 - **Usability**: Simple CLI interface and clear documentation
 - **Portability**: Cross-platform compatibility
-- **Scalability**: Handle multi-GB files efficiently
+- **Scalability**: Handle multi-GB files efficiently with parallel processing
 
 ### Non-Goals
 - Real-time collaboration
@@ -82,6 +83,8 @@ graph TB
   - Vault creation, file addition, extraction, removal
   - Encryption/decryption coordination
   - Memory-optimized streaming operations
+  - **Parallel processing** with configurable worker pools
+  - **Progress reporting** for long-running operations
   - Password handling and validation
 
 - **Compression Engine** (`pkg/lib/vault/compression.go`)
@@ -120,25 +123,27 @@ pkg/lib/vault/
 
 #### vault.go - Unified Vault Operations
 ```go
-// Key functions (all in one optimized module):
+// Primary functions in unified module:
 func CreateVault(vaultPath, password string) error
 func AddFileToVault(vaultPath, password, filePath string) error
 func AddDirectoryToVault(vaultPath, password, dirPath string) error
-func ListVault(vaultPath, password string) ([]VaultEntry, error)
+func AddDirectoryToVaultParallel(vaultPath, password, dirPath string, config *ParallelConfig) (*ParallelStats, error)
+func ListVault(vaultPath, password string) ([]FileEntry, error)
 func ExtractFromVault(vaultPath, password, outputDir string) error
+func ExtractMultipleFilesFromVaultParallel(vaultPath, password, outputDir string, targets []string, config *ParallelConfig) (*ParallelStats, error)
 func GetFromVault(vaultPath, password, outputDir string, targets []string) error
 func RemoveFromVault(vaultPath, password string, targets []string) error
 func ValidateVaultFile(vaultPath string) error
 func ReadPasswordSecurely(prompt string) (string, error)
 ```
 
-**Responsibilities:**
-- Complete vault lifecycle management
-- All CRUD operations in one module
-- Optimized memory usage with streaming
-- Cryptographic operations
-- Error handling and validation
-- Password security
+**Key Features:**
+- **Streaming operations**: Memory-efficient for large files
+- **Parallel processing**: Configurable worker pools (1-16 workers)
+- **Progress reporting**: Real-time status updates for long operations
+- **Unified error handling**: Consistent across all operations
+- **Security integration**: Cryptography embedded in operations
+- **Performance optimization**: 1MB buffers, efficient I/O
 
 #### compression.go - Compression Utilities
 ```go

@@ -31,17 +31,19 @@ flint-vault/
 **🔄 Recent Major Refactoring:**
 - **Unified Architecture**: Consolidated separate modules into `vault.go`
 - **Performance Optimization**: Memory-efficient streaming operations
+- **Parallel Processing**: Configurable worker pools for large operations
 - **Stress Testing**: Validated with 2.45 GB datasets
-- **Enhanced Testing**: Comprehensive test coverage for large files
+- **Enhanced Testing**: Comprehensive test coverage for large files and parallel operations
 
 ## 🚀 Getting Started
 
 ### Prerequisites
 
-- **Go 1.21+**: Latest Go version
+- **Go 1.24+**: Latest Go version (updated from 1.21)
 - **Git**: Version control
 - **Make**: Build automation (optional)
 - **Minimum 8GB RAM**: For large file testing (recommended)
+- **Multi-core CPU**: For parallel processing development (4+ cores recommended)
 
 ### Development Setup
 
@@ -193,30 +195,33 @@ func TestVaultOperation(t *testing.T) {
 
 #### Large File Test Example
 ```go
-func TestLargeFileOperations(t *testing.T) {
+func TestLargeFileParallelOperations(t *testing.T) {
     if testing.Short() {
-        t.Skip("Skipping large file test in short mode")
+        t.Skip("Skipping large file parallel test in short mode")
     }
 
-    tmpDir, err := os.MkdirTemp("", "large_file_test_*")
+    tmpDir, err := os.MkdirTemp("", "parallel_test_*")
     if err != nil {
         t.Fatalf("Setup failed: %v", err)
     }
     defer os.RemoveAll(tmpDir)
 
-    // Create large test file (100MB)
-    largeFile := filepath.Join(tmpDir, "large_file.bin")
-    testData := make([]byte, 100*1024*1024)
-    rand.Read(testData)
-    
-    if err := os.WriteFile(largeFile, testData, 0644); err != nil {
-        t.Fatalf("Failed to create test file: %v", err)
+    // Create multiple large test files (50MB each)
+    for i := 0; i < 4; i++ {
+        fileName := fmt.Sprintf("large_file_%d.bin", i)
+        filePath := filepath.Join(tmpDir, fileName)
+        testData := make([]byte, 50*1024*1024)
+        rand.Read(testData)
+        
+        if err := os.WriteFile(filePath, testData, 0644); err != nil {
+            t.Fatalf("Failed to create test file %d: %v", i, err)
+        }
     }
 
-    vaultPath := filepath.Join(tmpDir, "large_test.flint")
-    password := "large_file_test_password"
+    vaultPath := filepath.Join(tmpDir, "parallel_test.flint")
+    password := "parallel_test_password"
 
-    // Test large file operations
+    // Test parallel operations
     t.Run("Create vault", func(t *testing.T) {
         err := vault.CreateVault(vaultPath, password)
         if err != nil {
@@ -224,37 +229,104 @@ func TestLargeFileOperations(t *testing.T) {
         }
     })
 
-    t.Run("Add large file", func(t *testing.T) {
+    t.Run("Add directory with parallel processing", func(t *testing.T) {
+        config := vault.DefaultParallelConfig()
+        config.MaxConcurrency = 4 // Use 4 workers
+
         start := time.Now()
-        err := vault.AddFileToVault(vaultPath, password, largeFile)
+        stats, err := vault.AddDirectoryToVaultParallel(vaultPath, password, tmpDir, config)
         duration := time.Since(start)
         
         if err != nil {
-            t.Fatalf("Failed to add large file: %v", err)
+            t.Fatalf("Failed to add directory with parallel processing: %v", err)
         }
         
-        t.Logf("Added 100MB file in %v (%.2f MB/s)", 
-               duration, 100.0/duration.Seconds())
+        if stats.SuccessfulFiles != 4 {
+            t.Errorf("Expected 4 files, got %d", stats.SuccessfulFiles)
+        }
+        
+        t.Logf("Added 4 files (200MB total) in %v with %d workers (%.2f MB/s)", 
+               duration, config.MaxConcurrency, 200.0/duration.Seconds())
     })
 
-    t.Run("Extract large file", func(t *testing.T) {
+    t.Run("Extract with parallel processing", func(t *testing.T) {
+        config := vault.DefaultParallelConfig()
+        config.MaxConcurrency = 4
+
         extractDir := filepath.Join(tmpDir, "extracted")
-        err := vault.ExtractFromVault(vaultPath, password, extractDir)
+        targets := []string{"large_file_0.bin", "large_file_1.bin", "large_file_2.bin", "large_file_3.bin"}
+        
+        start := time.Now()
+        stats, err := vault.ExtractMultipleFilesFromVaultParallel(vaultPath, password, extractDir, targets, config)
+        duration := time.Since(start)
+        
         if err != nil {
-            t.Fatalf("Failed to extract: %v", err)
+            t.Fatalf("Failed to extract with parallel processing: %v", err)
         }
-
-        // Verify file integrity
-        extractedFile := filepath.Join(extractDir, "large_file.bin")
-        extractedData, err := os.ReadFile(extractedFile)
-        if err != nil {
-            t.Fatalf("Failed to read extracted file: %v", err)
+        
+        if stats.SuccessfulFiles != 4 {
+            t.Errorf("Expected 4 files extracted, got %d", stats.SuccessfulFiles)
         }
-
-        if !bytes.Equal(testData, extractedData) {
-            t.Error("Extracted file doesn't match original")
-        }
+        
+        t.Logf("Extracted 4 files (200MB total) in %v with %d workers (%.2f MB/s)", 
+               duration, config.MaxConcurrency, 200.0/duration.Seconds())
     })
+}
+```
+
+#### Parallel Processing Test Example
+```go
+func TestParallelProcessingPerformance(t *testing.T) {
+    tmpDir, err := os.MkdirTemp("", "parallel_perf_test_*")
+    if err != nil {
+        t.Fatalf("Setup failed: %v", err)
+    }
+    defer os.RemoveAll(tmpDir)
+
+    // Create test files
+    for i := 0; i < 10; i++ {
+        fileName := fmt.Sprintf("test_file_%d.txt", i)
+        filePath := filepath.Join(tmpDir, fileName)
+        content := fmt.Sprintf("Test content for file %d\n", i)
+        if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+            t.Fatalf("Failed to create test file: %v", err)
+        }
+    }
+
+    vaultPath := filepath.Join(tmpDir, "perf_test.flint")
+    password := "perf_test_password"
+
+    // Create vault
+    if err := vault.CreateVault(vaultPath, password); err != nil {
+        t.Fatalf("Failed to create vault: %v", err)
+    }
+
+    // Test different worker configurations
+    workerCounts := []int{1, 2, 4, 8}
+    
+    for _, workers := range workerCounts {
+        t.Run(fmt.Sprintf("Workers_%d", workers), func(t *testing.T) {
+            config := vault.DefaultParallelConfig()
+            config.MaxConcurrency = workers
+
+            start := time.Now()
+            stats, err := vault.AddDirectoryToVaultParallel(vaultPath, password, tmpDir, config)
+            duration := time.Since(start)
+            
+            if err != nil {
+                t.Fatalf("Parallel add failed with %d workers: %v", workers, err)
+            }
+            
+            t.Logf("Workers: %d, Files: %d, Duration: %v, Speed: %.2f files/sec", 
+                   workers, stats.SuccessfulFiles, duration, 
+                   float64(stats.SuccessfulFiles)/duration.Seconds())
+                   
+            // Verify performance scaling
+            if workers > 1 && duration > time.Second {
+                t.Logf("Performance with %d workers: %v", workers, duration)
+            }
+        })
+    }
 }
 ```
 

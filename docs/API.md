@@ -7,6 +7,7 @@ This document provides comprehensive API documentation for Flint Vault, includin
 - [Package Overview](#package-overview)
 - [Core Types](#core-types)
 - [Vault Operations](#vault-operations)
+- [Parallel Processing](#parallel-processing)
 - [File Operations](#file-operations)
 - [Utility Functions](#utility-functions)
 - [Error Handling](#error-handling)
@@ -14,7 +15,7 @@ This document provides comprehensive API documentation for Flint Vault, includin
 
 ## 📦 Package Overview
 
-Flint Vault provides a clean, unified Go API for encrypted file storage with optimized performance.
+Flint Vault provides a clean, unified Go API for encrypted file storage with optimized performance and parallel processing capabilities.
 
 ```go
 import "flint-vault/pkg/lib/vault"
@@ -23,33 +24,63 @@ import "flint-vault/pkg/lib/vault"
 **Key Features:**
 - Unified API with all operations in single module
 - Memory-optimized streaming operations
+- **Parallel processing** with configurable worker pools
 - Support for multi-GB files
 - Built-in compression support
+- **Progress reporting** for long-running operations
 - Comprehensive error handling
 
 ## 🏗️ Core Types
 
-### VaultEntry
+### FileEntry
 
 ```go
-type VaultEntry struct {
-    Path    string      `json:"path"`
-    Name    string      `json:"name"`
-    IsDir   bool        `json:"is_dir"`
-    Size    int64       `json:"size"`
-    Mode    os.FileMode `json:"mode"`
-    ModTime time.Time   `json:"mod_time"`
-    Content []byte      `json:"content"`
+type FileEntry struct {
+    Path           string    `json:"path"`            // Path to file/directory
+    Name           string    `json:"name"`            // Name of file/directory
+    IsDir          bool      `json:"is_dir"`          // Whether it's a directory
+    Size           int64     `json:"size"`            // Original file size
+    CompressedSize int64     `json:"compressed_size"` // Size after compression
+    Mode           uint32    `json:"mode"`            // Access permissions
+    ModTime        time.Time `json:"mod_time"`        // Last modification time
+    Offset         int64     `json:"offset"`          // Offset in vault file
+    SHA256Hash     [32]byte  `json:"sha256_hash"`     // SHA-256 hash for integrity
 }
 ```
 
-### VaultData
+### VaultDirectory
 
 ```go
-type VaultData struct {
-    Entries   []VaultEntry `json:"entries"`
-    CreatedAt time.Time    `json:"created_at"`
-    Comment   string       `json:"comment"`
+type VaultDirectory struct {
+    Version   uint32      `json:"version"`    // Vault format version
+    Entries   []FileEntry `json:"entries"`    // File/directory metadata
+    CreatedAt time.Time   `json:"created_at"` // Vault creation time
+    Comment   string      `json:"comment"`    // Vault comment
+}
+```
+
+### ParallelConfig
+
+```go
+type ParallelConfig struct {
+    MaxConcurrency int             // Maximum number of concurrent workers
+    Timeout        time.Duration   // Timeout for individual operations
+    ProgressChan   chan string     // Progress reporting channel (optional)
+    Context        context.Context // Context for cancellation
+}
+```
+
+### ParallelStats
+
+```go
+type ParallelStats struct {
+    TotalFiles      int64         // Total files processed
+    SuccessfulFiles int64         // Successfully processed files
+    FailedFiles     int64         // Failed files
+    TotalSize       int64         // Total size processed (bytes)
+    Duration        time.Duration // Total processing duration
+    Errors          []error       // Collection of errors encountered
+    ErrorsMutex     sync.Mutex    // Mutex for thread-safe error collection
 }
 ```
 
@@ -98,11 +129,11 @@ fmt.Println("✅ Vault created successfully!")
 Lists all contents of an encrypted vault with metadata.
 
 ```go
-func ListVault(vaultPath, password string) ([]VaultEntry, error)
+func ListVault(vaultPath, password string) ([]FileEntry, error)
 ```
 
 **Returns:**
-- `[]VaultEntry`: Slice of vault entries with full metadata
+- `[]FileEntry`: Slice of vault entries with full metadata
 - `error`: Error if vault cannot be opened or password is incorrect
 
 **Example:**
@@ -137,6 +168,120 @@ if err := vault.ValidateVaultFile("my-vault.flint"); err != nil {
 } else {
     fmt.Println("✅ Vault file is valid")
 }
+```
+
+## 🚀 Parallel Processing
+
+### DefaultParallelConfig
+
+Creates default parallel processing configuration.
+
+```go
+func DefaultParallelConfig() *ParallelConfig
+```
+
+**Example:**
+```go
+config := vault.DefaultParallelConfig()
+// Uses 2x CPU cores, 5-minute timeout
+fmt.Printf("Using %d workers\n", config.MaxConcurrency)
+```
+
+### AddDirectoryToVaultParallel
+
+Adds directory to vault with optimized parallel processing.
+
+```go
+func AddDirectoryToVaultParallel(vaultPath, password, dirPath string, config *ParallelConfig) (*ParallelStats, error)
+```
+
+**Features:**
+- Configurable worker pools
+- Progress reporting
+- Comprehensive statistics
+- Error collection and reporting
+
+**Example:**
+```go
+config := vault.DefaultParallelConfig()
+config.MaxConcurrency = 8 // Use 8 workers
+
+// Optional: Set up progress reporting
+progressChan := make(chan string, 100)
+config.ProgressChan = progressChan
+
+go func() {
+    for msg := range progressChan {
+        fmt.Printf("🔄 %s\n", msg)
+    }
+}()
+
+stats, err := vault.AddDirectoryToVaultParallel(
+    "my-vault.flint", 
+    "password", 
+    "./large-directory/", 
+    config)
+
+close(progressChan)
+
+if err != nil {
+    log.Fatalf("Parallel add failed: %v", err)
+}
+
+vault.PrintParallelStats(stats)
+```
+
+### ExtractMultipleFilesFromVaultParallel
+
+Extracts multiple files from vault in parallel.
+
+```go
+func ExtractMultipleFilesFromVaultParallel(vaultPath, password, outputDir string, targetPaths []string, config *ParallelConfig) (*ParallelStats, error)
+```
+
+**Example:**
+```go
+config := vault.DefaultParallelConfig()
+config.MaxConcurrency = 6
+
+targets := []string{
+    "documents/report.pdf",
+    "images/photo.jpg",
+    "data/large-dataset.csv",
+}
+
+stats, err := vault.ExtractMultipleFilesFromVaultParallel(
+    "my-vault.flint",
+    "password",
+    "./extracted/",
+    targets,
+    config)
+
+if err != nil {
+    log.Fatalf("Parallel extraction failed: %v", err)
+}
+
+fmt.Printf("✅ Extracted %d files in %v\n", 
+    stats.SuccessfulFiles, stats.Duration)
+```
+
+### PrintParallelStats
+
+Prints detailed statistics from parallel operations.
+
+```go
+func PrintParallelStats(stats *ParallelStats)
+```
+
+**Example Output:**
+```
+📊 Operation Statistics:
+✅ Successfully processed: 245 files
+❌ Failed: 0 files
+📏 Total size: 1.2 GB
+⏱️  Duration: 12.3 seconds
+📈 Average speed: 97.6 MB/s
+🔧 Workers utilized: 8
 ```
 
 ## 📁 File Operations
@@ -348,7 +493,7 @@ if err := vault.AddFileToVault(vaultPath, password, filePath); err != nil {
 
 ## 💡 Complete Examples
 
-### Basic Vault Operations
+### High-Performance Parallel Operations
 
 ```go
 package main
@@ -356,11 +501,12 @@ package main
 import (
     "fmt"
     "log"
+    "runtime"
     "flint-vault/pkg/lib/vault"
 )
 
 func main() {
-    vaultPath := "example.flint"
+    vaultPath := "high-performance.flint"
     password := "secure-password-123"
 
     // Create vault
@@ -369,184 +515,159 @@ func main() {
         log.Fatalf("Create failed: %v", err)
     }
 
-    // Add file
-    fmt.Println("📄 Adding file...")
-    if err := vault.AddFileToVault(vaultPath, password, "document.pdf"); err != nil {
-        log.Fatalf("Add failed: %v", err)
-    }
+    // Configure high-performance parallel processing
+    config := vault.DefaultParallelConfig()
+    config.MaxConcurrency = runtime.NumCPU() * 2 // 2x CPU cores
+    
+    // Set up progress monitoring
+    progressChan := make(chan string, 100)
+    config.ProgressChan = progressChan
 
-    // Add directory
-    fmt.Println("📁 Adding directory...")
-    if err := vault.AddDirectoryToVault(vaultPath, password, "project/"); err != nil {
-        log.Fatalf("Add directory failed: %v", err)
-    }
-
-    // List contents
-    fmt.Println("📋 Listing contents...")
-    entries, err := vault.ListVault(vaultPath, password)
-    if err != nil {
-        log.Fatalf("List failed: %v", err)
-    }
-
-    fmt.Printf("✅ Vault contains %d items\n", len(entries))
-    for _, entry := range entries {
-        icon := "📄"
-        if entry.IsDir {
-            icon = "📁"
+    // Start progress reporter
+    go func() {
+        for msg := range progressChan {
+            fmt.Printf("🔄 %s\n", msg)
         }
-        fmt.Printf("  %s %s (%d bytes)\n", icon, entry.Path, entry.Size)
+    }()
+
+    // Add large directory with parallel processing
+    fmt.Println("📁 Adding directory with parallel processing...")
+    stats, err := vault.AddDirectoryToVaultParallel(
+        vaultPath, 
+        password, 
+        "./large-dataset/", 
+        config)
+
+    close(progressChan)
+
+    if err != nil {
+        log.Fatalf("Parallel add failed: %v", err)
     }
 
-    // Extract specific files
-    fmt.Println("🔓 Extracting specific files...")
-    targets := []string{"document.pdf", "project/"}
-    if err := vault.GetFromVault(vaultPath, password, "./extracted/", targets); err != nil {
-        log.Fatalf("Extract failed: %v", err)
+    // Print performance statistics
+    vault.PrintParallelStats(stats)
+
+    // Parallel extraction of specific files
+    fmt.Println("\n🔓 Parallel extraction of specific files...")
+    
+    progressChan2 := make(chan string, 100)
+    config.ProgressChan = progressChan2
+
+    go func() {
+        for msg := range progressChan2 {
+            fmt.Printf("🔄 %s\n", msg)
+        }
+    }()
+
+    targets := []string{
+        "data/file1.bin",
+        "data/file2.bin", 
+        "documents/",
     }
 
-    fmt.Println("🎉 All operations completed successfully!")
+    extractStats, err := vault.ExtractMultipleFilesFromVaultParallel(
+        vaultPath,
+        password,
+        "./extracted-parallel/",
+        targets,
+        config)
+
+    close(progressChan2)
+
+    if err != nil {
+        log.Fatalf("Parallel extraction failed: %v", err)
+    }
+
+    vault.PrintParallelStats(extractStats)
+
+    fmt.Println("🎉 High-performance operations completed!")
 }
 ```
 
-### Advanced Usage with Error Handling
+### Custom Worker Configuration
 
 ```go
-package main
+func customWorkerExample() {
+    // For CPU-intensive operations (heavy compression)
+    cpuConfig := vault.DefaultParallelConfig()
+    cpuConfig.MaxConcurrency = runtime.NumCPU()
 
-import (
-    "fmt"
-    "log"
-    "os"
-    "flint-vault/pkg/lib/vault"
-)
+    // For I/O-intensive operations (large files)
+    ioConfig := vault.DefaultParallelConfig()
+    ioConfig.MaxConcurrency = runtime.NumCPU() * 3
 
-func main() {
-    vaultPath := "advanced-example.flint"
+    // For memory-constrained environments
+    memoryConfig := vault.DefaultParallelConfig()
+    memoryConfig.MaxConcurrency = 2
+
+    // For maximum throughput (sufficient resources)
+    maxConfig := vault.DefaultParallelConfig()
+    maxConfig.MaxConcurrency = 16
     
-    // Read password securely
-    password, err := vault.ReadPasswordSecurely("Enter vault password: ")
-    if err != nil {
-        log.Fatalf("Failed to read password: %v", err)
-    }
+    // Use appropriate config based on operation type
+    stats, err := vault.AddDirectoryToVaultParallel(
+        "vault.flint", 
+        "password", 
+        "./data/", 
+        ioConfig) // Use I/O optimized config
+        
+    // Handle results...
+}
+```
 
-    // Check if vault exists
-    if _, err := os.Stat(vaultPath); os.IsNotExist(err) {
-        fmt.Println("🔐 Creating new vault...")
-        if err := vault.CreateVault(vaultPath, password); err != nil {
-            log.Fatalf("Failed to create vault: %v", err)
-        }
-    } else {
-        // Validate existing vault
-        fmt.Println("🔍 Validating existing vault...")
-        if err := vault.ValidateVaultFile(vaultPath); err != nil {
-            log.Fatalf("Vault validation failed: %v", err)
-        }
-    }
+### Progress Monitoring and Error Handling
 
-    // Get vault information
-    info, err := vault.GetVaultInfo(vaultPath)
-    if err != nil {
-        log.Fatalf("Failed to get vault info: %v", err)
-    }
+```go
+func progressMonitoringExample() {
+    config := vault.DefaultParallelConfig()
     
-    fmt.Printf("📊 Vault Info:\n")
-    fmt.Printf("  📁 File: %s\n", info.FilePath)
-    fmt.Printf("  📏 Size: %d bytes\n", info.FileSize)
-    fmt.Printf("  🔢 Version: %d\n", info.Version)
-    fmt.Printf("  🔐 Iterations: %d\n", info.Iterations)
-
-    // Perform operations with comprehensive error handling
-    operations := []struct {
-        name string
-        fn   func() error
-    }{
-        {"Adding test file", func() error {
-            return vault.AddFileToVault(vaultPath, password, "test.txt")
-        }},
-        {"Listing contents", func() error {
-            entries, err := vault.ListVault(vaultPath, password)
-            if err != nil {
-                return err
+    // Advanced progress monitoring
+    progressChan := make(chan string, 200)
+    config.ProgressChan = progressChan
+    
+    // Statistics tracking
+    var fileCount int64
+    var totalSize int64
+    
+    go func() {
+        for msg := range progressChan {
+            // Custom progress processing
+            if strings.Contains(msg, "Adding:") {
+                fileCount++
+                fmt.Printf("[%d] %s\n", fileCount, msg)
+            } else if strings.Contains(msg, "Processing") {
+                fmt.Printf("📊 %s\n", msg)
             }
-            fmt.Printf("📋 Found %d entries\n", len(entries))
-            return nil
-        }},
-        {"Extracting files", func() error {
-            return vault.ExtractFromVault(vaultPath, password, "./extracted/")
-        }},
-    }
-
-    for _, op := range operations {
-        fmt.Printf("🔄 %s...\n", op.name)
-        if err := op.fn(); err != nil {
-            log.Printf("❌ %s failed: %v\n", op.name, err)
-        } else {
-            fmt.Printf("✅ %s completed\n", op.name)
         }
-    }
-}
-```
-
-### Performance Monitoring
-
-```go
-package main
-
-import (
-    "fmt"
-    "time"
-    "flint-vault/pkg/lib/vault"
-)
-
-func measureOperation(name string, fn func() error) {
-    start := time.Now()
-    fmt.Printf("🔄 Starting %s...\n", name)
+    }()
     
-    if err := fn(); err != nil {
-        fmt.Printf("❌ %s failed: %v\n", name, err)
+    stats, err := vault.AddDirectoryToVaultParallel(
+        "monitored-vault.flint",
+        "password",
+        "./source-data/",
+        config)
+    
+    close(progressChan)
+    
+    if err != nil {
+        log.Printf("❌ Operation failed: %v", err)
+        
+        // Handle partial success
+        if stats != nil && stats.SuccessfulFiles > 0 {
+            fmt.Printf("⚠️  Partial success: %d files added\n", 
+                stats.SuccessfulFiles)
+        }
         return
     }
     
-    duration := time.Since(start)
-    fmt.Printf("✅ %s completed in %v\n", name, duration)
-}
-
-func main() {
-    vaultPath := "performance-test.flint"
-    password := "test-password"
-
-    measureOperation("Vault Creation", func() error {
-        return vault.CreateVault(vaultPath, password)
-    })
-
-    measureOperation("Large Directory Addition", func() error {
-        return vault.AddDirectoryToVault(vaultPath, password, "./large-dataset/")
-    })
-
-    measureOperation("Full Extraction", func() error {
-        return vault.ExtractFromVault(vaultPath, password, "./extracted/")
-    })
+    // Success statistics
+    fmt.Printf("✅ Complete success:\n")
+    fmt.Printf("   Files: %d\n", stats.TotalFiles)
+    fmt.Printf("   Size: %d bytes\n", stats.TotalSize)
+    fmt.Printf("   Speed: %.2f MB/s\n", 
+        float64(stats.TotalSize)/1024/1024/stats.Duration.Seconds())
 }
 ```
-
-## 🚀 Performance Considerations
-
-### Memory Usage
-- **Streaming Operations**: All file operations use memory-efficient streaming
-- **Buffer Size**: Optimized 1MB buffers for best performance
-- **Memory Ratio**: Typical 3.2:1 memory-to-data ratio during encryption
-
-### Best Practices
-1. **Use appropriate buffer sizes** for your system
-2. **Monitor memory usage** with large files
-3. **Validate vault files** before operations
-4. **Handle errors gracefully** with proper cleanup
-5. **Use secure password input** in production
-
-### Tested Performance
-- **Throughput**: Up to 272 MB/s for file operations
-- **Scalability**: Successfully tested with 2.45 GB datasets
-- **Memory Efficiency**: Excellent performance with large files
 
 ---
 

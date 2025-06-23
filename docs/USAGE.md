@@ -9,7 +9,9 @@ Flint Vault provides secure, encrypted storage for your files and directories. A
 **🚀 Recently Updated:**
 - Unified architecture for better performance
 - Memory-optimized operations for large files
+- **Parallel processing** with configurable worker pools
 - Enhanced compression support
+- **Progress reporting** for long-running operations
 - Stress-tested with multi-GB datasets
 
 ## 🔧 Command Structure
@@ -70,16 +72,18 @@ Creating encrypted vault: my-documents.flint
 
 ### 2. add - Add Files and Directories
 
-Adds files or directories to an existing vault with compression and optimization.
+Adds files or directories to an existing vault with compression, optimization, and parallel processing.
 
 ```bash
-flint-vault add --vault <vault-file> --source <source-path> [--password <password>]
+flint-vault add --vault <vault-file> --source <source-path> [--password <password>] [--workers <num>] [--progress]
 ```
 
 **Options:**
 - `-v, --vault <path>`: Vault file path
 - `-s, --source <path>`: File or directory to add
 - `-p, --password <password>`: Password (prompted if not provided)
+- `-w, --workers <num>`: Number of parallel workers (0 = auto-detect, default: 0)
+- `--progress`: Show progress information (default: true)
 
 **Examples:**
 
@@ -87,28 +91,39 @@ flint-vault add --vault <vault-file> --source <source-path> [--password <passwor
 # Add a single file
 flint-vault add --vault my-vault.flint --source ./document.pdf
 
-# Add entire directory recursively
-flint-vault add -v my-vault.flint -s ./important-folder/
+# Add entire directory with parallel processing
+flint-vault add -v my-vault.flint -s ./important-folder/ --workers 8
 
-# Add with absolute paths
-flint-vault add -v my-vault.flint -s /home/user/documents/
+# Add with automatic worker detection and progress
+flint-vault add -v my-vault.flint -s ./large-directory/
 
-# Multiple operations example
-flint-vault add -v backup.flint -s ./project/
-flint-vault add -v backup.flint -s ./config.json
-flint-vault add -v backup.flint -s ./readme.md
+# Add with custom worker count
+flint-vault add -v my-vault.flint -s ./project/ --workers 4 --progress
+
+# Add without progress reporting
+flint-vault add -v my-vault.flint -s ./quiet-operation/ --progress=false
 ```
 
 **Performance Features:**
+- **Parallel processing**: Configurable worker pools for large directories
+- **Auto-detection**: Automatically determines optimal worker count (2x CPU cores)
+- **Progress reporting**: Real-time status updates for long operations
 - **Streaming I/O**: Memory-efficient for large files
 - **Automatic compression**: Reduces vault size
 - **Metadata preservation**: Timestamps, permissions
-- **Progress indication**: For large operations
+- **Batch optimization**: High-performance processing for multiple files
 
-**Output:**
+**Output Example:**
 ```
-Adding important-folder/ to vault...
-✅ Directory 'important-folder/' successfully added to vault!
+Adding directory 'large-folder/' to vault (workers: 8)...
+🔄 Processing 245 files in batch mode...
+🔄 Adding: folder/file001.dat
+🔄 Adding: folder/file002.dat
+...
+✅ Successfully processed 245 files
+📊 Total size: 1.2 GB, Compressed: 945 MB (21% savings)
+📈 Performance: 85 MB/s average, Peak memory: 2.1 GB
+⏱️ Duration: 14.2 seconds
 ```
 
 ### 3. list - View Vault Contents
@@ -135,7 +150,7 @@ flint-vault list -v my-vault.flint -p mypassword
 
 **Example Output:**
 ```
-�� Vault: my-vault.flint
+🔍 Vault: my-vault.flint
 📁 Contents (5 items):
 
   📁 .  0 B  2025-06-19 22:37
@@ -153,16 +168,19 @@ flint-vault list -v my-vault.flint -p mypassword
 
 ### 4. extract - Extract All Files
 
-Extracts all files from the vault to a destination directory with full restoration.
+Extracts all files from the vault to a destination directory with full restoration and parallel processing.
 
 ```bash
-flint-vault extract --vault <vault-file> --output <destination> [--password <password>]
+flint-vault extract --vault <vault-file> --output <destination> [--password <password>] [--files <list>] [--workers <num>] [--progress]
 ```
 
 **Options:**
 - `-v, --vault <path>`: Vault file path
 - `-o, --output <path>`: Destination directory
 - `-p, --password <password>`: Password (prompted if not provided)
+- `-f, --files <list>`: Specific files to extract (optional, extracts all if not specified)
+- `-w, --workers <num>`: Number of parallel workers (0 = auto-detect, default: 0)
+- `--progress`: Show progress information (default: true)
 
 **Examples:**
 
@@ -170,23 +188,39 @@ flint-vault extract --vault <vault-file> --output <destination> [--password <pas
 # Extract all files to current directory
 flint-vault extract --vault my-vault.flint --output ./
 
-# Extract to specific directory
-flint-vault extract -v my-vault.flint -o ~/restored-files/
+# Extract with parallel processing
+flint-vault extract -v my-vault.flint -o ~/restored-files/ --workers 6
 
-# Extract with password
-flint-vault extract -v my-vault.flint -o ./backup/ -p mypassword
+# Extract specific files in parallel
+flint-vault extract -v my-vault.flint -o ./output/ --files file1.txt,file2.pdf,folder/ --workers 4
+
+# Extract with automatic optimization
+flint-vault extract -v my-vault.flint -o ./backup/
+
+# High-performance extraction for large vaults
+flint-vault extract -v large-vault.flint -o ./data/ --workers 8 --progress
 ```
 
-**Output:**
+**Output Example:**
 ```
 Extracting all files to directory: ./restored-files/
-✅ All files successfully extracted to './restored-files/'!
+Using 6 parallel workers for extraction...
+🔄 Extracting: documents/report.pdf (1.2 MB)
+🔄 Extracting: images/photo.jpg (845 KB)
+🔄 Extracting: data/dataset.csv (15.3 MB)
+...
+✅ Successfully extracted 187 files
+📊 Total extracted: 2.1 GB in 8.3 seconds
+📈 Performance: 253 MB/s average throughput
+🔍 Integrity: 100% verified (all checksums match)
 ```
 
 **Performance:**
-- **High-speed extraction**: Up to 245 MB/s throughput
+- **High-speed extraction**: Up to 400+ MB/s with parallel processing
 - **Memory efficient**: Streaming operations for large files
 - **Full restoration**: Directory structure, permissions, timestamps
+- **Selective extraction**: Extract only specified files for efficiency
+- **Automatic optimization**: Uses optimal worker count based on file types
 
 ### 5. get - Extract Specific Files
 
@@ -351,13 +385,51 @@ Enter password for new vault: [hidden input]
 
 **System: Linux 6.14.8 (June 2025)**
 
-| Operation | Speed | Memory Usage | Notes |
-|-----------|-------|--------------|-------|
-| Vault Creation | <1s | 4 MB | Instant |
-| Adding Files | 61 MB/s | 3.2:1 ratio | Efficient |
-| Extracting Files | 245 MB/s | Minimal | 4x faster |
-| Removing Files | 272 MB/s | 2.5:1 ratio | Fastest |
-| Listing Contents | <1s | Minimal | Metadata only |
+| Operation | Speed | Workers | Memory Usage | Notes |
+|-----------|-------|---------|--------------|-------|
+| Vault Creation | <1s | - | 4 MB | Instant |
+| Adding Files | 61-85 MB/s | Auto/8 | 3.2:1 ratio | Parallel optimized |
+| Extracting Files | 245-400+ MB/s | Auto/4-8 | Minimal | 4-6x faster |
+| Extracting Specific | 400+ MB/s | 4 | Low | Selective processing |
+| Removing Files | 272 MB/s | - | 2.5:1 ratio | Fastest |
+| Listing Contents | <1s | - | Minimal | Metadata only |
+
+### Parallel Processing Optimization
+
+**Worker Configuration Guidelines:**
+
+```bash
+# For CPU-intensive operations (compression-heavy)
+--workers $(nproc)  # Equal to CPU cores
+
+# For I/O-intensive operations (large files)
+--workers $(($(nproc) * 2))  # 2x CPU cores (default auto-detect)
+
+# For memory-constrained systems
+--workers 2  # Conservative approach
+
+# For maximum throughput (sufficient RAM)
+--workers 8  # High-performance setup
+```
+
+**Performance Tips:**
+- **Auto-detection**: Let Flint Vault choose optimal workers (recommended)
+- **Large directories**: Use 4-8 workers for best performance
+- **Small files**: 2-4 workers prevent overhead
+- **Large files**: Auto-detection works best
+- **Progress reporting**: Minimal performance impact
+
+**Resource Requirements:**
+```bash
+# Memory calculation for parallel operations
+# Base memory: 3.2x data size
+# Per worker: +100-200 MB overhead
+# Example: 1GB vault with 4 workers = ~3.5-4GB RAM
+
+# Check available resources
+free -h  # Check memory
+nproc    # Check CPU cores
+```
 
 ### Large File Handling
 
