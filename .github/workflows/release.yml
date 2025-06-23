@@ -1,0 +1,167 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+
+env:
+  GO_VERSION: '1.21'
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ env.GO_VERSION }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-${{ env.GO_VERSION }}-
+            ${{ runner.os }}-go-
+
+      - name: Run tests
+        run: |
+          go mod tidy
+          go test -v ./...
+
+  build:
+    name: Build and Release
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ env.GO_VERSION }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-${{ env.GO_VERSION }}-
+            ${{ runner.os }}-go-
+
+      - name: Get version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION=${GITHUB_REF#refs/tags/}
+          fi
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "Building version: $VERSION"
+
+      - name: Build binaries
+        run: |
+          chmod +x build.sh
+          ./build.sh ${{ steps.version.outputs.VERSION }}
+
+      - name: Generate release notes
+        id: release_notes
+        run: |
+          cat > release_notes.md << EOF
+          # Flint Vault ${{ steps.version.outputs.VERSION }}
+          
+          Secure encrypted file storage with military-grade AES-256-GCM encryption.
+          
+          ## 🚀 Features
+          - **AES-256-GCM encryption** with PBKDF2 key derivation (100,000 iterations)
+          - **High-performance streaming operations** for large files
+          - **Parallel processing** for multiple files and directories
+          - **Gzip compression** to reduce vault size
+          - **SHA-256 integrity verification** for all files
+          - **Cross-platform support** (Linux, macOS, Windows)
+          
+          ## 📦 Installation
+          
+          ### Quick Install (Linux/macOS)
+          \`\`\`bash
+          # Download and extract
+          wget https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.VERSION }}/flint-vault-${{ steps.version.outputs.VERSION }}-linux-amd64.tar.gz
+          tar -xzf flint-vault-${{ steps.version.outputs.VERSION }}-linux-amd64.tar.gz
+          cd flint-vault-${{ steps.version.outputs.VERSION }}-linux-amd64
+          
+          # Install
+          sudo ./install.sh
+          \`\`\`
+          
+          ### Manual Installation
+          1. Download the appropriate archive for your platform
+          2. Extract the archive
+          3. Copy the binary to your PATH (e.g., \`/usr/local/bin\`)
+          4. Run \`flint-vault --help\` to get started
+          
+          ## 🔐 Quick Start
+          \`\`\`bash
+          # Create a new vault
+          flint-vault create -f my-vault.flint
+          
+          # Add files to vault
+          flint-vault add -v my-vault.flint -s important-file.txt
+          
+          # List vault contents
+          flint-vault list -v my-vault.flint
+          
+          # Extract all files
+          flint-vault extract -v my-vault.flint -o extracted/
+          \`\`\`
+          
+          ## 📋 Platform Support
+          - **Linux**: x86_64, ARM64
+          - **macOS**: Intel (x86_64), Apple Silicon (ARM64)
+          - **Windows**: x86_64
+          
+          ## ✅ Verification
+          All binaries include SHA-256 checksums for verification.
+          EOF
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.VERSION }}
+          name: Flint Vault ${{ steps.version.outputs.VERSION }}
+          body_path: release_notes.md
+          draft: false
+          prerelease: false
+          files: |
+            dist/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: flint-vault-${{ steps.version.outputs.VERSION }}
+          path: dist/
+          retention-days: 30 
