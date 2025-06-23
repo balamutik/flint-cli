@@ -179,6 +179,11 @@ func ReadPasswordSecurely(prompt string) (string, error) {
 
 // AddFileToVault adds a file to vault with streaming and integrity checking
 func AddFileToVault(vaultPath, password, filePath string) error {
+	return addFileToVaultWithBasePath(vaultPath, password, filePath, "")
+}
+
+// addFileToVaultWithBasePath adds a file to vault with optional base path for relative path calculation
+func addFileToVaultWithBasePath(vaultPath, password, filePath, basePath string) error {
 	// Check if file is a directory
 	fileInfo, err := os.Stat(filePath)
 	if err != nil {
@@ -201,9 +206,27 @@ func AddFileToVault(vaultPath, password, filePath string) error {
 		return fmt.Errorf("metadata calculation error: %w", err)
 	}
 
+	// Calculate the correct path to store in vault
+	var storePath string
+	if basePath == "" {
+		// Single file addition - store only filename
+		storePath = fileInfo.Name()
+	} else {
+		// File from directory - calculate relative path starting from directory name
+		relativePath, err := filepath.Rel(basePath, filePath)
+		if err != nil {
+			// Fallback to original path if relative calculation fails
+			storePath = filepath.Clean(filePath)
+		} else {
+			// Add directory name to the beginning of relative path
+			dirName := filepath.Base(basePath)
+			storePath = filepath.Join(dirName, relativePath)
+		}
+	}
+
 	// Create file entry with metadata (we'll calculate offset later)
 	entry := FileEntry{
-		Path:           filepath.Clean(filePath),
+		Path:           storePath,
 		Name:           fileInfo.Name(),
 		IsDir:          false,
 		Size:           fileInfo.Size(),
@@ -243,7 +266,8 @@ func AddDirectoryToVault(vaultPath, password, dirPath string) error {
 			return addDirectoryEntry(vaultPath, password, path, info, dirPath)
 		}
 
-		return AddFileToVault(vaultPath, password, path)
+		// Use the internal function with basePath for proper relative path calculation
+		return addFileToVaultWithBasePath(vaultPath, password, path, dirPath)
 	})
 }
 
@@ -325,6 +349,11 @@ func ListVault(vaultPath, password string) ([]FileEntry, error) {
 
 // AddMultipleFilesToVaultParallel adds multiple files to vault in parallel
 func AddMultipleFilesToVaultParallel(vaultPath, password string, filePaths []string, config *ParallelConfig) (*ParallelStats, error) {
+	return addMultipleFilesToVaultParallelWithBasePath(vaultPath, password, filePaths, "", config)
+}
+
+// addMultipleFilesToVaultParallelWithBasePath adds multiple files to vault in parallel with optional base path
+func addMultipleFilesToVaultParallelWithBasePath(vaultPath, password string, filePaths []string, basePath string, config *ParallelConfig) (*ParallelStats, error) {
 	stats := &ParallelStats{
 		TotalFiles: int64(len(filePaths)),
 	}
@@ -347,7 +376,12 @@ func AddMultipleFilesToVaultParallel(vaultPath, password string, filePaths []str
 
 			// Synchronize vault access
 			vaultMutex.Lock()
-			err := AddFileToVault(vaultPath, password, path)
+			var err error
+			if basePath == "" {
+				err = AddFileToVault(vaultPath, password, path)
+			} else {
+				err = addFileToVaultWithBasePath(vaultPath, password, path, basePath)
+			}
 			vaultMutex.Unlock()
 
 			if err != nil {
@@ -376,13 +410,41 @@ func AddMultipleFilesToVaultParallel(vaultPath, password string, filePaths []str
 
 // AddDirectoryToVaultParallel adds directory to vault with parallel processing
 func AddDirectoryToVaultParallel(vaultPath, password, dirPath string, config *ParallelConfig) (*ParallelStats, error) {
-	// Collect all files in directory
+	startTime := time.Now()
+
+	// First, add the root directory entry synchronously
+	rootInfo, err := os.Stat(dirPath)
+	if err != nil {
+		return nil, fmt.Errorf("directory info error: %w", err)
+	}
+
+	if err := addDirectoryEntry(vaultPath, password, dirPath, rootInfo, dirPath); err != nil {
+		return nil, fmt.Errorf("root directory add error: %w", err)
+	}
+
+	// Collect all files and subdirectories
 	var filePaths []string
-	err := filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
+	var subDirs []struct {
+		path string
+		info os.FileInfo
+	}
+
+	err = filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
-		if !info.IsDir() {
+
+		// Skip the root directory as we already added it
+		if path == dirPath {
+			return nil
+		}
+
+		if info.IsDir() {
+			subDirs = append(subDirs, struct {
+				path string
+				info os.FileInfo
+			}{path, info})
+		} else {
 			filePaths = append(filePaths, path)
 		}
 		return nil
@@ -392,7 +454,29 @@ func AddDirectoryToVaultParallel(vaultPath, password, dirPath string, config *Pa
 		return nil, fmt.Errorf("directory traversal error: %w", err)
 	}
 
-	return AddMultipleFilesToVaultParallel(vaultPath, password, filePaths, config)
+	// Add all subdirectories synchronously (they're metadata-only operations)
+	for _, subDir := range subDirs {
+		if err := addDirectoryEntry(vaultPath, password, subDir.path, subDir.info, dirPath); err != nil {
+			return nil, fmt.Errorf("subdirectory add error for %s: %w", subDir.path, err)
+		}
+	}
+
+	// Add all files in parallel with proper base path
+	if len(filePaths) == 0 {
+		return &ParallelStats{
+			TotalFiles:      0,
+			SuccessfulFiles: 0,
+			FailedFiles:     0,
+			Duration:        time.Since(startTime),
+		}, nil
+	}
+
+	fileStats, err := addMultipleFilesToVaultParallelWithBasePath(vaultPath, password, filePaths, dirPath, config)
+	if fileStats != nil {
+		// Add time spent on directory operations to total duration
+		fileStats.Duration = time.Since(startTime)
+	}
+	return fileStats, err
 }
 
 // ExtractMultipleFilesFromVaultParallel extracts multiple files from vault in parallel
@@ -535,14 +619,26 @@ func addDirectoryEntry(vaultPath, password, dirPath string, info os.FileInfo, ba
 		return fmt.Errorf("vault directory load error: %w", err)
 	}
 
-	// Create directory entry
-	relativePath, err := filepath.Rel(basePath, dirPath)
-	if err != nil {
-		relativePath = dirPath
+	// Calculate the correct path to store in vault
+	var storePath string
+	if basePath == dirPath {
+		// Root directory being added - use only its name
+		storePath = info.Name()
+	} else {
+		// Subdirectory - calculate relative path starting from directory name
+		relativePath, err := filepath.Rel(basePath, dirPath)
+		if err != nil {
+			// Fallback to original path if relative calculation fails
+			storePath = filepath.Clean(dirPath)
+		} else {
+			// Add base directory name to the beginning of relative path
+			baseDirName := filepath.Base(basePath)
+			storePath = filepath.Join(baseDirName, relativePath)
+		}
 	}
 
 	entry := FileEntry{
-		Path:           filepath.Clean(relativePath),
+		Path:           storePath,
 		Name:           info.Name(),
 		IsDir:          true,
 		Size:           0,
